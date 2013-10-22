@@ -1262,44 +1262,47 @@ reload_fact(Ensemble, Id) ->
 
 -spec load_saved_fact(_,_) -> not_found | {ok,_}.
 load_saved_fact(Ensemble, Id) ->
-    <<Hash:160/integer>> = riak_ensemble_util:sha(term_to_binary({Ensemble, Id})),
-    Name = integer_to_list(Hash),
-    {ok, Root} = application:get_env(riak_ensemble, data_root),
-    File = filename:join([Root, "ensembles", Name]),
-    case file:read_file(File) of
-        {ok, <<CRC:32/integer, Binary/binary>>} ->
-            case erlang:crc32(Binary) of
-                CRC ->
-                    try
-                        {ok, binary_to_term(Binary)}
-                    catch
-                        _:_ ->
-                            not_found
-                    end;
-                _ ->
-                    not_found
-            end;
-        {error, _} ->
-            not_found
-    end.
+    riak_ensemble_storage:get({Ensemble, Id}).
+    %% <<Hash:160/integer>> = riak_ensemble_util:sha(term_to_binary({Ensemble, Id})),
+    %% Name = integer_to_list(Hash),
+    %% {ok, Root} = application:get_env(riak_ensemble, data_root),
+    %% File = filename:join([Root, "ensembles", Name]),
+    %% case file:read_file(File) of
+    %%     {ok, <<CRC:32/integer, Binary/binary>>} ->
+    %%         case erlang:crc32(Binary) of
+    %%             CRC ->
+    %%                 try
+    %%                     {ok, binary_to_term(Binary)}
+    %%                 catch
+    %%                     _:_ ->
+    %%                         not_found
+    %%                 end;
+    %%             _ ->
+    %%                 not_found
+    %%         end;
+    %%     {error, _} ->
+    %%         not_found
+    %% end.
 
 -spec save_fact(state()) -> ok | {error,_}.
 save_fact(#state{ensemble=Ensemble, id=Id, fact=Fact}) ->
-    <<Hash:160/integer>> = riak_ensemble_util:sha(term_to_binary({Ensemble, Id})),
-    Name = integer_to_list(Hash),
-    {ok, Root} = application:get_env(riak_ensemble, data_root),
-    File = filename:join([Root, "ensembles", Name]),
-    Binary = term_to_binary(Fact),
-    CRC = erlang:crc32(Binary),
-    ok = filelib:ensure_dir(File),
-    try
-        ok = riak_ensemble_util:replace_file(File, [<<CRC:32/integer>>, Binary])
-    catch
-        _:Err ->
-            %% lager:error("Failed saving ensemble ~p state to ~p: ~p",
-            %%             [{Ensemble, Id}, File, Err]),
-            {error, Err}
-    end.
+    true = riak_ensemble_storage:put({Ensemble, Id}, Fact),
+    ok = riak_ensemble_storage:sync().
+    %% <<Hash:160/integer>> = riak_ensemble_util:sha(term_to_binary({Ensemble, Id})),
+    %% Name = integer_to_list(Hash),
+    %% {ok, Root} = application:get_env(riak_ensemble, data_root),
+    %% File = filename:join([Root, "ensembles", Name]),
+    %% Binary = term_to_binary(Fact),
+    %% CRC = erlang:crc32(Binary),
+    %% ok = filelib:ensure_dir(File),
+    %% try
+    %%     ok = riak_ensemble_util:replace_file(File, [<<CRC:32/integer>>, Binary])
+    %% catch
+    %%     _:Err ->
+    %%         %% lager:error("Failed saving ensemble ~p state to ~p: ~p",
+    %%         %%             [{Ensemble, Id}, File, Err]),
+    %%         {error, Err}
+    %% end.
 
 -spec set_timer(non_neg_integer(), any(), state()) -> state().
 set_timer(Time, Event, State) ->

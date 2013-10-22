@@ -119,18 +119,21 @@ rget(Key, Default) ->
 rmodify(Key, F, Default) ->
     riak_ensemble_peer:kmodify(node(), root, Key, F, Default, 10000).
 
--spec root_set_ensemble(ensemble_id(), ensemble_info()) -> std_reply().
-root_set_ensemble(EnsembleId, Info=#ensemble_info{leader=Leader, members=Members, seq=Seq}) ->
-    rmodify(ensembles,
-            fun(Ensembles) ->
-                    orddict:update(EnsembleId,
-                                   fun(CurInfo) ->
-                                           CurInfo#ensemble_info{leader=Leader,
-                                                                 members=Members,
-                                                                 seq=Seq}
-                                   end, Info, Ensembles)
-            end,
-            []).
+-spec root_set_ensemble(ensemble_id(), ensemble_info()) -> std_reply(). 
+root_set_ensemble(_, _) ->
+    ok.
+%% root_set_ensemble(EnsembleId, Info=#ensemble_info{leader=Leader, members=Members, seq=Seq}) ->
+%%    rmodify(ensembles,
+%%             fun(Ensembles) ->
+%%                     io:format("here~n"),
+%%                     orddict:update(EnsembleId,
+%%                                    fun(CurInfo) ->
+%%                                            CurInfo#ensemble_info{leader=Leader,
+%%                                                                  members=Members,
+%%                                                                  seq=Seq}
+%%                                    end, Info, Ensembles)
+%%             end,
+%%             []).
 
 -spec root_set_ensemble_once(ensemble_id(), ensemble_info()) -> std_reply().
 root_set_ensemble_once(EnsembleId, Info) ->
@@ -196,7 +199,6 @@ create_ensemble(EnsembleId, PeerId, Mod, Args) ->
 -spec create_ensemble(ensemble_id(), leader_id(), [peer_id()], module(), [any()]) -> ok | error.
 create_ensemble(EnsembleId, EnsLeader, Members, Mod, Args) ->
     Info = #ensemble_info{leader=EnsLeader, members=Members, seq={0,0}, mod=Mod, args=Args},
-    io:format("Mod/Info: ~p/~p~n", [Mod, Info]),
     case root_set_ensemble_once(EnsembleId, Info) of
         {ok, _Obj} ->
             ok;
@@ -439,21 +441,22 @@ load_saved_state() ->
 save_state(State) ->
     do_save_state(State#state{peers=[], remote_peers=[]}).
 
--spec do_save_state(state()) -> ok | {error, term()}.
-do_save_state(State) ->
-    {ok, Root} = application:get_env(riak_ensemble, data_root),
-    File = filename:join([Root, "ensembles", "manager"]),
-    Binary = term_to_binary(State),
-    CRC = erlang:crc32(Binary),
-    ok = filelib:ensure_dir(File),
-    try
-        ok = riak_ensemble_util:replace_file(File, [<<CRC:32/integer>>, Binary])
-    catch
-        _:Err ->
-            error_logger:error_msg("Failed saving riak_ensemble_manager state to ~p: ~p~n",
-                                   [File, Err]),
-            {error, Err}
-    end.
+do_save_state(_State) -> ok.
+%% -spec do_save_state(state()) -> ok | {error, term()}.
+%% do_save_state(State) ->
+%%     {ok, Root} = application:get_env(riak_ensemble, data_root),
+%%     File = filename:join([Root, "ensembles", "manager"]),
+%%     Binary = term_to_binary(State),
+%%     CRC = erlang:crc32(Binary),
+%%     ok = filelib:ensure_dir(File),
+%%     try
+%%         ok = riak_ensemble_util:replace_file(File, [<<CRC:32/integer>>, Binary])
+%%     catch
+%%         _:Err ->
+%%             error_logger:error_msg("Failed saving riak_ensemble_manager state to ~p: ~p~n",
+%%                                    [File, Err]),
+%%             {error, Err}
+%%     end.
 
 -spec schedule_tick() -> 'ok'.
 schedule_tick() ->
