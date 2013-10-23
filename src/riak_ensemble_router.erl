@@ -209,6 +209,7 @@ ensemble_cast(Ensemble, Msg) ->
 -spec handle_ensemble_cast(_,_) -> ok.
 handle_ensemble_cast({sync_send_event, From, Ref, Event, Timeout}, Pid) ->
     spawn(fun() ->
+                  %% TODO: Try/catch here and send nack for faster bail-out
                   Result = gen_fsm:sync_send_event(Pid, Event, Timeout),
                   From ! {Ref, Result}
           end),

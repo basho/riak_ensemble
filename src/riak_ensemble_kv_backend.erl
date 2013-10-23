@@ -31,6 +31,7 @@
 -export([obj_epoch/1, obj_seq/1, obj_key/1, obj_value/1]).
 -export([set_obj_epoch/2, set_obj_seq/2, set_obj_value/2]).
 -export([get/3, put/4, tick/5]).
+-export([sync_request/2, sync/2]).
 -export([reply/2]).
 
 -include_lib("riak_ensemble_types.hrl").
@@ -142,6 +143,21 @@ send_msg(Proxy, From, Msg) ->
 reply(From, Reply) ->
     riak_ensemble_backend:reply(From, Reply),
     ok.
+
+%%===================================================================
+
+%% TODO: Implement AAE syncing.
+
+-spec sync_request(riak_ensemble_backend:from(), state()) -> state().
+sync_request(From, State) ->
+    riak_ensemble_backend:reply(From, ok),
+    State.
+
+-spec sync([{peer_id(), orddict:orddict()}], state()) -> {ok, state()}       |
+                                                         {async, state()}    |
+                                                         {{error,_}, state()}.
+sync(_, State) ->
+    {ok, State}.
 
 %%===================================================================
 

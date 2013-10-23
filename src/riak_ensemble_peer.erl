@@ -29,6 +29,7 @@
 %% API
 -export([start_link/5, start/5]).
 -export([join/2, join/3, get_leader/1]).
+-export([sync_complete/1, sync_failed/1]).
 -export([kget/4, kupdate/6, kput_once/5, kover/5, obj_value/3]).
 -export([probe/2, election/2, prepare/2, leading/2, following/2,
          probe/3, election/3, prepare/3, leading/3, following/3]).
@@ -50,7 +51,7 @@
 -record(fact, {epoch    :: non_neg_integer(),
                seq      :: non_neg_integer(),
                leader   :: peer_id(),
-               view_vsn :: non_neg_integer(),
+               view_seq :: {non_neg_integer(), non_neg_integer()},
                views    :: [[peer_id()]]
               }).
 
@@ -84,6 +85,8 @@
                 mod           :: module(),
                 modstate      :: any(),
                 workers       :: tuple(),
+                trust         :: boolean(),
+                last_views    :: [[peer_id()]],
                 self          :: pid()
                }).
 
@@ -125,6 +128,14 @@ check_quorum(Pid, Timeout) when is_pid(Pid) ->
 -spec get_leader(pid()) -> peer_id().
 get_leader(Pid) when is_pid(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, get_leader, infinity).
+
+-spec sync_complete(pid()) -> ok.
+sync_complete(Pid) when is_pid(Pid) ->
+    gen_fsm:send_event(Pid, sync_complete).
+
+-spec sync_failed(pid()) -> ok.
+sync_failed(Pid) when is_pid(Pid) ->
+    gen_fsm:send_event(Pid, sync_failed).
 
 %%%===================================================================
 %%% K/V API
@@ -243,7 +254,12 @@ probe({timeout, Replies}, State=#state{fact=Fact}) ->
     State2 = State#state{fact=Latest,
                          members=compute_members(Latest#fact.views)},
     check_ensemble(State2),
-    probe(init, State2);
+    probe(delay, State2);
+probe(delay, State) ->
+    State2 = set_timer(1000, probe_continue, State),
+    {next_state, probe, State2};
+probe(probe_continue, State) ->
+    probe(init, State);
 probe(Msg, State) ->
     common(Msg, State, probe).
 
@@ -251,6 +267,9 @@ probe(Msg, State) ->
 probe(Msg, From, State) ->
     common(Msg, From, State, probe).
 
+maybe_follow(_, State=#state{trust=false}) ->
+    %% This peer is untrusted and must sync
+    sync(init, State);
 maybe_follow(undefined, State) ->
     election(init, set_leader(undefined, State));
 maybe_follow(Leader, State=#state{id=Leader}) ->
@@ -258,6 +277,33 @@ maybe_follow(Leader, State=#state{id=Leader}) ->
 maybe_follow(Leader, State) ->
     io:format("~p: Following ~p~n", [State#state.id, Leader]),
     following(init, set_leader(Leader, State)).
+
+sync(init, State) ->
+    ?OUT("~p: sync~n", [State#state.id]),
+    State2 = send_all(sync, State),
+    {next_state, sync, State2};
+sync({quorum_met, Replies}, State) ->
+    {Result, State2} = mod_sync(Replies, State),
+    io:format("========~n~p~n~p~n~p~n~p~n========~n", [Replies, Result, State, State2]),
+    case Result of
+        ok ->
+            probe(init, State2#state{trust=true});
+        async ->
+            {next_state, sync, State2};
+        {error, _} ->
+            ?OUT("~p/~p: error when syncing: ~p~n", [State#state.id, self(), Result]),
+            probe(init, State2)
+    end;
+sync({timeout, _Replies}, State) ->
+    probe(init, State);
+sync(sync_complete, State) ->
+    %% Asynchronous sync complete
+    probe(init, State#state{trust=true});
+sync(sync_failed, State) ->
+    %% Asynchronous sync failed
+    probe(init, State);
+sync(Msg, State) ->
+    common(Msg, State, sync).
 
 -spec election(_, state()) -> next_state().
 election(init, State) ->
@@ -324,7 +370,7 @@ prepare({quorum_met, Replies}, State=#state{id=Id, fact=Fact}) ->
     Latest2 = Latest#fact{leader=Id,
                           epoch=NextEpoch,
                           seq=0,
-                          view_vsn=0},
+                          view_seq={NextEpoch, 0}},
     State3 = State#state{fact=Latest2,
                          members=compute_members(Latest2#fact.views)},
     leading(init, State3);
@@ -388,8 +434,8 @@ leading({update_members, Changes}, _From, State=#state{fact=Fact,
     case update_view(Changes, Members, hd(Views)) of
         {[], NewView} ->
             Views2 = [NewView|Views],
-            ViewVsn = Fact#fact.view_vsn,
-            NewFact = Fact#fact{views=Views2, view_vsn=ViewVsn+1},
+            ViewSeq = {Fact#fact.epoch, Fact#fact.seq},
+            NewFact = Fact#fact{views=Views2, view_seq=ViewSeq},
             pause_workers(State),
             case try_commit(NewFact, State) of
                 {ok, State3} ->
@@ -442,23 +488,28 @@ update_view([{del, Id}|Rest], Errors, Members, View) ->
     end.
 
 -spec should_transition(state()) -> boolean().
-should_transition(State) ->
-    tl(views(State)) =/= [].
+should_transition(State=#state{last_views=LastViews}) ->
+    Views = views(State),
+    (Views =:= LastViews) and (tl(views(State)) =/= []).
 
 -spec transition(state()) -> {ok, state()}       |
                              {shutdown, state()} |
                              {failed, state()}.
 transition(State=#state{id=Id, fact=Fact}) ->
     Latest = hd(Fact#fact.views),
-    ViewVsn = Fact#fact.view_vsn,
-    NewFact = Fact#fact{views=[Latest], view_vsn=ViewVsn+1},
+    %% TODO: I don't think it's safe to update view_seq until after successfull commit
+    %% ViewSeq = {Fact#fact.epoch, Fact#fact.seq},
+    NewFact = Fact#fact{views=[Latest]},
     case try_commit(NewFact, State) of
         {ok, State3} ->
             case lists:member(Id, Latest) of
                 false ->
                     {shutdown, State3};
                 true ->
-                    {ok, State3}
+                    NewFact2 = State3#state.fact,
+                    ViewSeq = {NewFact2#fact.epoch, NewFact2#fact.seq},
+                    NewFact3 = NewFact2#fact{view_seq=ViewSeq},
+                    {ok, State3#state{fact=NewFact3}}
             end;
         {failed, _}=Failed ->
             Failed
@@ -466,12 +517,14 @@ transition(State=#state{id=Id, fact=Fact}) ->
 
 -spec try_commit(fact(), state()) -> {failed, state()} | {ok, state()}.
 try_commit(NewFact0, State) ->
+    Views = views(State),
     NewFact = increment_sequence(NewFact0),
     State2 = local_commit(NewFact, State),
     {Future, State3} = blocking_send_all({commit, NewFact}, State2),
     case wait_for_quorum(Future) of
         {quorum_met, _Replies} ->
-            {ok, State3};
+            State4 = State3#state{last_views=Views},
+            {ok, State4};
         {timeout, _Replies} ->
             {failed, set_leader(undefined, State3)}
     end.
@@ -546,7 +599,7 @@ valid_request(Peer, ReqEpoch, State=#state{ready=Ready}) ->
 -spec increment_epoch(fact() | state()) -> {pos_integer(), fact() | state()}.
 increment_epoch(Fact=#fact{epoch=Epoch}) ->
     NextEpoch = Epoch + 1,
-    Fact2 = Fact#fact{epoch=NextEpoch, seq=0, view_vsn=0},
+    Fact2 = Fact#fact{epoch=NextEpoch, seq=0, view_seq={NextEpoch, 0}},
     {NextEpoch, Fact2};
 increment_epoch(State=#state{fact=Fact}) ->
     {NextEpoch, Fact2} = increment_epoch(Fact),
@@ -624,6 +677,9 @@ views(State) ->
 common({probe, From}, State=#state{fact=Fact}, StateName) ->
     reply(From, Fact, State),
     {next_state, StateName, State};
+common({sync, From}, State, StateName) ->
+    State2 = mod_sync_request(From, State),
+    {next_state, StateName, State2};
 common(tick, State, StateName) ->
     %% TODO: Fix it so we don't have errant tick messages
     {next_state, StateName, State};
@@ -671,7 +727,7 @@ nack(_Msg, _State) ->
 -spec maybe_update_ensembles(state()) -> state().
 maybe_update_ensembles(State=#state{ensemble=root, id=Id, members=Members, fact=Fact}) ->
     check_root_ensemble(Id, State),
-    ViewSeq = {Fact#fact.epoch, Fact#fact.view_vsn},
+    ViewSeq = Fact#fact.view_seq,
     Self = self(),
     spawn(fun() ->
                   case kget(node(), Self, members, 5000) of
@@ -698,13 +754,13 @@ maybe_update_ensembles(State=#state{ensemble=root, id=Id, members=Members, fact=
     State;
 maybe_update_ensembles(State=#state{ensemble=Ensemble, id=Id, members=Members, fact=Fact}) ->
     %% TODO: This should view based not members
-    ViewSeq = {Fact#fact.epoch, Fact#fact.view_vsn},
+    ViewSeq = Fact#fact.view_seq,
     Info = #ensemble_info{leader=Id, members=Members, seq=ViewSeq},
     riak_ensemble_manager:update_ensemble(Ensemble, Info),
     State.
 
 check_root_ensemble(Leader, #state{ensemble=root, members=Members, fact=Fact}) ->
-    ViewSeq = {Fact#fact.epoch, Fact#fact.view_vsn},
+    ViewSeq = Fact#fact.view_seq,
     RootInfo = #ensemble_info{leader=Leader, members=Members, seq=ViewSeq},
     RootNodes = [Node || {_, Node} <- Members],
     _ = [riak_ensemble_manager:update_root_ensemble(Node, RootInfo) || Node <- RootNodes],
@@ -715,7 +771,7 @@ check_ensemble(State=#state{ensemble=root}) ->
     check_root_ensemble(undefined, State);
 check_ensemble(#state{ensemble=Ensemble, id=Id, members=Members, fact=Fact}) ->
     %% TODO: This should view based not members
-    ViewSeq = {Fact#fact.epoch, Fact#fact.view_vsn},
+    ViewSeq = Fact#fact.view_seq,
     Info = #ensemble_info{leader=Id, members=Members, seq=ViewSeq},
     ok = riak_ensemble_manager:check_ensemble(Ensemble, Info),
     ok.
@@ -1045,13 +1101,15 @@ latest_obj([{_,notfound}|L], ObjA, State) ->
     latest_obj(L, ObjA, State);
 latest_obj([{_,ObjB}|L], notfound, State) ->
     latest_obj(L, ObjB, State);
-latest_obj([{_,ObjB}|L], ObjA, State) ->
-    A = {get_obj(epoch, ObjA, State), get_obj(seq, ObjA, State)},
-    B = {get_obj(epoch, ObjB, State), get_obj(seq, ObjB, State)},
-    case B > A of
-        true  -> latest_obj(L, ObjB, State);
-        false -> latest_obj(L, ObjA, State)
-    end.
+latest_obj([{_,ObjB}|L], ObjA, State=#state{mod=Mod}) ->
+    LatestObj = riak_ensemble_backend:latest_obj(Mod, ObjA, ObjB),
+    latest_obj(L, LatestObj, State).
+    %% A = {get_obj(epoch, ObjA, State), get_obj(seq, ObjA, State)},
+    %% B = {get_obj(epoch, ObjB, State), get_obj(seq, ObjB, State)},
+    %% case B > A of
+    %%     true  -> latest_obj(L, ObjB, State);
+    %%     false -> latest_obj(L, ObjA, State)
+    %% end.
 
 -spec get_value(_,_,atom() | state()) -> any().
 get_value(Obj, Default, State) ->
@@ -1072,7 +1130,9 @@ init([Mod, Ensemble, Id, Views, Args]) ->
     ?OUT("~p: starting~n", [Id]),
     Members = compute_members(Views),
     {A,B,C} = os:timestamp(),
-    _ = random:seed(A + erlang:phash2(Id), B, C),
+    _ = random:seed(A + erlang:phash2(Id),
+                    B + erlang:phash2(node()),
+                    C),
     ETS = ets:new(x, [public, {read_concurrency, true}, {write_concurrency, true}]),
     Saved = reload_fact(Ensemble, Id),
     Fact = Saved#fact{views=Views},
@@ -1084,6 +1144,7 @@ init([Mod, Ensemble, Id, Views, Args]) ->
                    fact=Fact,
                    members=Members,
                    peers=[],
+                   trust=false,
                    mod=Mod,
                    modstate=riak_ensemble_backend:start(Mod, Ensemble, Id, Args)},
     State2 = local_commit(State#state.fact, State),
@@ -1096,6 +1157,7 @@ init([Mod, Ensemble, Id, Views, Args]) ->
         true ->
             {ok, probe, State2};
         false ->
+            %% TODO: Is moving to election when not trusted safe?
             {ok, election, State2}
     end.
 
@@ -1197,15 +1259,22 @@ latest_fact([{_,FactB}|L], FactA) ->
         false -> latest_fact(L, FactA)
     end.
 
-existing_leader(Replies, #fact{leader=undefined}) ->
+existing_leader(Replies, #fact{leader=undefined, views=Views}) ->
+    Members = compute_members(Views),
     Counts = lists:foldl(fun({_, #fact{leader=Leader}}, Counts) ->
-                                 dict:update_counter(Leader, 1, Counts)
+                                 case lists:member(Leader, Members) of
+                                     true ->
+                                         dict:update_counter(Leader, 1, Counts);
+                                     false ->
+                                         Counts
+                                 end
                          end, dict:new(), Replies),
     Choices = lists:reverse(lists:keysort(2, dict:to_list(Counts))),
     case Choices of
         [] ->
             undefined;
         [{Leader, _Count}|_] ->
+    io:format("----~n~p~n~p~n-----~n", [Replies, Leader]),
             Leader
     end;
 existing_leader(_Replies, #fact{leader=Leader}) ->
@@ -1244,6 +1313,18 @@ mod_put(Key, Obj, From, State=#state{mod=Mod, modstate=ModState, id=Id}) ->
     ModState2 = Mod:put(Key, Obj, {From, Id}, ModState),
     State#state{modstate=ModState2}.
 
+mod_sync_request(From, State=#state{mod=Mod, modstate=ModState, id=Id}) ->
+    ModState2 = Mod:sync_request({From, Id}, ModState),
+    State#state{modstate=ModState2}.
+
+-spec mod_sync([any()], state()) -> {ok, state()}       |
+                                    {async, state()}    |
+                                    {{error,_}, state()}.
+mod_sync(Replies, State=#state{mod=Mod, modstate=ModState}) ->
+    {Reply, ModState2} = Mod:sync(Replies, ModState),
+    State2 = State#state{modstate=ModState2},
+    {Reply, State2}.
+
 -spec new_obj(_,_,_,_,state()) -> any().
 new_obj(Epoch, Seq, Key, Value, #state{mod=Mod, modstate=_ModState}) ->
     Mod:new_obj(Epoch, Seq, Key, Value).
@@ -1266,7 +1347,7 @@ reload_fact(Ensemble, Id) ->
         not_found ->
             #fact{epoch=0,
                   seq=0,
-                  view_vsn=0,
+                  view_seq={0,0},
                   leader=undefined}
     end.
 
