@@ -47,10 +47,11 @@
 
 %%%===================================================================
 
--record(fact, {epoch  :: non_neg_integer(),
-               seq    :: non_neg_integer(),
-               leader :: peer_id(),
-               views  :: [[peer_id()]]
+-record(fact, {epoch    :: non_neg_integer(),
+               seq      :: non_neg_integer(),
+               leader   :: peer_id(),
+               view_vsn :: non_neg_integer(),
+               views    :: [[peer_id()]]
               }).
 
 -type fact() :: #fact{}.
@@ -327,7 +328,8 @@ prepare({quorum_met, Replies}, State=#state{id=Id, fact=Fact}) ->
     {NextEpoch, _} = increment_epoch(State),
     Latest2 = Latest#fact{leader=Id,
                           epoch=NextEpoch,
-                          seq=0},
+                          seq=0,
+                          view_vsn=0},
     State3 = State#state{fact=Latest2,
                          members=compute_members(Latest2#fact.views)},
     leading(init, State3);
@@ -387,7 +389,8 @@ leading({update_members, Changes}, _From, State=#state{fact=Fact,
     case update_view(Changes, Members, hd(Views)) of
         {[], NewView} ->
             Views2 = [NewView|Views],
-            NewFact = Fact#fact{views=Views2},
+            ViewVsn = Fact#fact.view_vsn,
+            NewFact = Fact#fact{views=Views2, view_vsn=ViewVsn+1},
             pause_workers(State),
             case try_commit(NewFact, State) of
                 {ok, State3} ->
@@ -448,7 +451,8 @@ should_transition(State) ->
                              {failed, state()}.
 transition(State=#state{id=Id, fact=Fact}) ->
     Latest = hd(Fact#fact.views),
-    NewFact = Fact#fact{views=[Latest]},
+    ViewVsn = Fact#fact.view_vsn,
+    NewFact = Fact#fact{views=[Latest], view_vsn=ViewVsn+1},
     case try_commit(NewFact, State) of
         {ok, State3} ->
             case lists:member(Id, Latest) of
@@ -543,7 +547,7 @@ valid_request(Peer, ReqEpoch, State=#state{ready=Ready}) ->
 -spec increment_epoch(fact() | state()) -> {pos_integer(), fact() | state()}.
 increment_epoch(Fact=#fact{epoch=Epoch}) ->
     NextEpoch = Epoch + 1,
-    Fact2 = Fact#fact{epoch=NextEpoch, seq=0},
+    Fact2 = Fact#fact{epoch=NextEpoch, seq=0, view_vsn=0},
     {NextEpoch, Fact2};
 increment_epoch(State=#state{fact=Fact}) ->
     {NextEpoch, Fact2} = increment_epoch(Fact),
@@ -560,7 +564,7 @@ local_commit(Fact=#fact{leader=_Leader, epoch=Epoch, seq=Seq, views=Views},
     ?OUT("~p: committing (~b,~b): ~p :: ~p :: T=~p~n",
          [State#state.id, Epoch, Seq, _Leader, Views, State#state.timer]),
     State2 = State#state{fact=Fact},
-    ok = save_fact(State2),
+    ok = maybe_save_fact(State2),
     case ets:member(ETS, {obj_seq, Epoch}) of
         true ->
             ets:insert(ETS, [{epoch, Epoch},
@@ -668,7 +672,7 @@ nack(_Msg, _State) ->
 -spec maybe_update_ensembles(state()) -> state().
 maybe_update_ensembles(State=#state{ensemble=root, id=Id, members=Members, fact=Fact}) ->
     check_root_ensemble(Id, State),
-    ViewSeq = {Fact#fact.epoch, Fact#fact.seq},
+    ViewSeq = {Fact#fact.epoch, Fact#fact.view_vsn},
     Self = self(),
     spawn(fun() ->
                   case kget(node(), Self, members, 5000) of
@@ -695,13 +699,13 @@ maybe_update_ensembles(State=#state{ensemble=root, id=Id, members=Members, fact=
     State;
 maybe_update_ensembles(State=#state{ensemble=Ensemble, id=Id, members=Members, fact=Fact}) ->
     %% TODO: This should view based not members
-    ViewSeq = {Fact#fact.epoch, Fact#fact.seq},
+    ViewSeq = {Fact#fact.epoch, Fact#fact.view_vsn},
     Info = #ensemble_info{leader=Id, members=Members, seq=ViewSeq},
     riak_ensemble_manager:update_ensemble(Ensemble, Info),
     State.
 
 check_root_ensemble(Leader, #state{ensemble=root, members=Members, fact=Fact}) ->
-    ViewSeq = {Fact#fact.epoch, Fact#fact.seq},
+    ViewSeq = {Fact#fact.epoch, Fact#fact.view_vsn},
     RootInfo = #ensemble_info{leader=Leader, members=Members, seq=ViewSeq},
     RootNodes = [Node || {_, Node} <- Members],
     _ = [riak_ensemble_manager:update_root_ensemble(Node, RootInfo) || Node <- RootNodes],
@@ -712,7 +716,7 @@ check_ensemble(State=#state{ensemble=root}) ->
     check_root_ensemble(undefined, State);
 check_ensemble(#state{ensemble=Ensemble, id=Id, members=Members, fact=Fact}) ->
     %% TODO: This should view based not members
-    ViewSeq = {Fact#fact.epoch, Fact#fact.seq},
+    ViewSeq = {Fact#fact.epoch, Fact#fact.view_vsn},
     Info = #ensemble_info{leader=Id, members=Members, seq=ViewSeq},
     riak_ensemble_manager:check_ensemble(Ensemble, Info),
     ok.
@@ -1257,6 +1261,7 @@ reload_fact(Ensemble, Id) ->
         not_found ->
             #fact{epoch=0,
                   seq=0,
+                  view_vsn=0,
                   leader=undefined}
     end.
 
@@ -1282,6 +1287,23 @@ load_saved_fact(Ensemble, Id) ->
         {error, _} ->
             not_found
     end.
+
+-spec maybe_save_fact(state()) -> ok.
+maybe_save_fact(State=#state{ensemble=Ensemble, id=Id, fact=NewFact}) ->
+    OldFact = reload_fact(Ensemble, Id),
+    case should_save(NewFact, OldFact) of
+        false ->
+            ok;
+        true ->
+            ok = save_fact(State2)
+    end.
+
+-spec should_save(fact(), fact()) -> boolean().
+should_save(NewFact, OldFact) ->
+    %% Ignore sequence number when comparing
+    A = NewFact#fact{seq=undefined},
+    B = OldFact#fact{seq=undefined},
+    A =/= B.
 
 -spec save_fact(state()) -> ok | {error,_}.
 save_fact(#state{ensemble=Ensemble, id=Id, fact=Fact}) ->
