@@ -26,6 +26,7 @@
          blocking_send_all/4,
          wait_for_quorum/1,
          handle_reply/4,
+         quorum_timeout/1,
          reply/3]).
 
 -include_lib("riak_ensemble_types.hrl").

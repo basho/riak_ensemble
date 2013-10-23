@@ -28,7 +28,7 @@
 
 %% API
 -export([start_link/5, start/5]).
--export([join/2, join/3, stop/1, get_leader/1]).
+-export([join/2, join/3, get_leader/1]).
 -export([kget/4, kupdate/6, kput_once/5, kover/5, obj_value/3]).
 -export([probe/2, election/2, prepare/2, leading/2, following/2,
          probe/3, election/3, prepare/3, leading/3, following/3]).
@@ -121,11 +121,6 @@ update_members(Pid, Changes, Timeout) when is_pid(Pid) ->
 -spec check_quorum(pid(), timeout()) -> ok | timeout.
 check_quorum(Pid, Timeout) when is_pid(Pid) ->
     riak_ensemble_router:sync_send_event(node(), Pid, check_quorum, Timeout).
-
--spec stop(pid()) -> ok.
-stop(Pid) ->
-    catch gen_fsm:sync_send_all_state_event(Pid, stop),
-    ok.
 
 -spec get_leader(pid()) -> peer_id().
 get_leader(Pid) when is_pid(Pid) ->
@@ -349,7 +344,7 @@ prepare(Msg, From, State) ->
 leading(init, State=#state{id=_Id}) ->
     ?OUT("~p: Leading~n", [_Id]),
     leading(tick, State);
-leading(tick, State) ->
+leading(tick, State=#state{ensemble=Ensemble, id=Id}) ->
     State2 = mod_tick(State),
     State3 = maybe_update_ensembles(State2),
     case should_transition(State3) of
@@ -369,6 +364,10 @@ leading(tick, State) ->
         {shutdown, State4} ->
             io:format("Shutting down...~n"),
             step_down(State4),
+            spawn(fun() ->
+                          riak_ensemble_peer_sup:stop_peer(Ensemble, Id)
+                  end),
+            timer:sleep(1000),
             {stop, normal, State4}
     end;
 leading({forward, From, Msg}, State) ->
@@ -632,7 +631,7 @@ common({forward, _From, _Msg}, State, StateName) ->
     {next_state, StateName, State};
 common(Msg, State, StateName) ->
     ?OUT("~p: ~s/ignoring: ~p~n", [State#state.id, StateName, Msg]),
-    io:format("~p: ~s/ignoring: ~p~n", [State#state.id, StateName, Msg]),
+    io:format("~p/~p: ~s/ignoring: ~p~n", [State#state.id, self(), StateName, Msg]),
     nack(Msg, State),
     {next_state, StateName, State}.
 
@@ -718,7 +717,7 @@ check_ensemble(#state{ensemble=Ensemble, id=Id, members=Members, fact=Fact}) ->
     %% TODO: This should view based not members
     ViewSeq = {Fact#fact.epoch, Fact#fact.view_vsn},
     Info = #ensemble_info{leader=Id, members=Members, seq=ViewSeq},
-    riak_ensemble_manager:check_ensemble(Ensemble, Info),
+    ok = riak_ensemble_manager:check_ensemble(Ensemble, Info),
     ok.
 
 %%%===================================================================
@@ -1114,9 +1113,6 @@ handle_event(_Event, StateName, State) ->
 -spec handle_sync_event(_, _, atom(), state()) -> {reply, ok, atom(), state()} |
                                                   {reply, ensemble_id(), atom(), state()} |
                                                   {stop, normal, ok, state()}.
-handle_sync_event(stop, _From, _StateName, State) ->
-    ?OUT("~p: Shutting down: ~p~n", [State#state.id, self()]),
-    {stop, normal, ok, State};
 handle_sync_event(get_leader, _From, StateName, State) ->
     {reply, leader(State), StateName, State};
 handle_sync_event(_Event, _From, StateName, State) ->
@@ -1127,6 +1123,9 @@ handle_sync_event(_Event, _From, StateName, State) ->
 handle_info({'DOWN', _, _, Pid, Reason}, StateName, State) ->
     io:format("Pid down for: ~p~n", [Reason]),
     State2 = maybe_restart_worker(Pid, State),
+    {next_state, StateName, State2};
+handle_info(quorum_timeout, StateName, State) ->
+    State2 = quorum_timeout(State),
     {next_state, StateName, State2};
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
@@ -1166,6 +1165,12 @@ blocking_send_all(Msg, Peers, State=#state{id=Id}) ->
                                                      {timeout, [peer_reply()]}.
 wait_for_quorum(Future) ->
     riak_ensemble_msg:wait_for_quorum(Future).
+
+quorum_timeout(State=#state{awaiting=undefined}) ->
+    State;
+quorum_timeout(State=#state{awaiting=Awaiting}) ->
+    Awaiting2 = riak_ensemble_msg:quorum_timeout(Awaiting),
+    State#state{awaiting=Awaiting2}.
 
 -spec reply(riak_ensemble_msg:msg_from(), any(), state()) -> ok.
 reply(From, Reply, #state{id=Id}) ->
@@ -1295,7 +1300,7 @@ maybe_save_fact(State=#state{ensemble=Ensemble, id=Id, fact=NewFact}) ->
         false ->
             ok;
         true ->
-            ok = save_fact(State2)
+            ok = save_fact(State)
     end.
 
 -spec should_save(fact(), fact()) -> boolean().

@@ -177,10 +177,7 @@ update_ensemble(EnsembleId, Info) ->
 
 -spec check_ensemble(ensemble_id(), ensemble_info()) -> ok.
 check_ensemble(EnsembleId, Info) ->
-    F = fun() ->
-                catch root_check_ensemble(EnsembleId, Info)
-        end,
-    spawn(F),
+    catch root_check_ensemble(EnsembleId, Info),
     ok.
 
 -spec join(node()) -> ok | error.
@@ -203,7 +200,6 @@ create_ensemble(EnsembleId, PeerId, Mod, Args) ->
 -spec create_ensemble(ensemble_id(), leader_id(), [peer_id()], module(), [any()]) -> ok | error.
 create_ensemble(EnsembleId, EnsLeader, Members, Mod, Args) ->
     Info = #ensemble_info{leader=EnsLeader, members=Members, seq={0,0}, mod=Mod, args=Args},
-    io:format("Mod/Info: ~p/~p~n", [Mod, Info]),
     case root_set_ensemble_once(EnsembleId, Info) of
         {ok, _Obj} ->
             ok;
