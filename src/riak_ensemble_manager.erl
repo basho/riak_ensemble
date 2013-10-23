@@ -123,12 +123,19 @@ rmodify(Key, F, Default) ->
 root_set_ensemble(EnsembleId, Info=#ensemble_info{leader=Leader, members=Members, seq=Seq}) ->
     rmodify(ensembles,
             fun(Ensembles) ->
-                    orddict:update(EnsembleId,
-                                   fun(CurInfo) ->
-                                           CurInfo#ensemble_info{leader=Leader,
-                                                                 members=Members,
-                                                                 seq=Seq}
-                                   end, Info, Ensembles)
+                    case orddict:find(EnsembleId, Ensembles) of
+                        {ok, #ensemble_info{leader=CurLeader, members=CurMembers, seq=CurSeq}}
+                          when (CurSeq > Seq) or ({CurLeader, CurMembers, CurSeq} =:= {Leader, Members, Seq}) ->
+                            %% Already equal, don't rewrite
+                            failed;
+                        {ok, CurInfo} ->
+                            NewInfo = CurInfo#ensemble_info{leader=Leader,
+                                                            members=Members,
+                                                            seq=Seq},
+                            orddict:store(EnsembleId, NewInfo, Ensembles);
+                        error ->
+                            orddict:store(EnsembleId, Info, Ensembles)
+                    end
             end,
             []).
 
@@ -148,7 +155,7 @@ root_set_ensemble_once(EnsembleId, Info) ->
 root_check_ensemble(EnsembleId, #ensemble_info{members=Peers, seq=Seq}) ->
     rmodify(ensembles,
             fun(Ensembles) ->
-                    io:format("########### ~p~n", [orddict:find(EnsembleId, Ensembles)]),
+                    %% io:format("########### ~p~n", [orddict:find(EnsembleId, Ensembles)]),
                     case orddict:find(EnsembleId, Ensembles) of
                         {ok, CurInfo=#ensemble_info{members=CurPeers, seq=CurSeq}}
                           when (CurPeers =/= Peers) and (CurSeq < Seq) ->
@@ -330,6 +337,9 @@ handle_cast({update_ensembles, Ensembles}, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
+do_update_ensembles(Ensembles, State) when Ensembles =:= State#state.ensembles ->
+    %% No change, ignore
+    State;
 do_update_ensembles(Ensembles, State) ->
     %% io:format("Updating: ~p~n", [Ensembles]),
     State2 = case lists:keyfind(root, 1, Ensembles) of
