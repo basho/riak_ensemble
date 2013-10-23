@@ -29,7 +29,6 @@
 
 -type delta() :: {any(), any()} | {'$none', any()} | {any(), '$none'}.
 -type orddict() :: orddict:orddict().
--define(old_hash, true).
 
 %%===================================================================
 
