@@ -22,7 +22,8 @@
          read_file/1,
          sha/1,
          md5/1,
-         orddict_delta/2]).
+         orddict_delta/2,
+         cast_unreliable/2]).
 
 %%===================================================================
 
@@ -136,3 +137,11 @@ orddict_delta([], D2, Acc) ->
 orddict_delta(D1, [], Acc) ->
     L = [{K1,{V1,'$none'}} || {K1,V1} <- D1],
     L ++ Acc.
+
+%% Copied from riak_core_send_msg.erl
+cast_unreliable(Dest, Request) ->
+    bang_unreliable(Dest, {'$gen_cast', Request}).
+
+bang_unreliable(Dest, Msg) ->
+    catch erlang:send(Dest, Msg, [noconnect, nosuspend]),
+    Msg.

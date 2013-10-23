@@ -297,12 +297,13 @@ handle_cast({peer_pid, Peer, Pid}, State=#state{remote_peers=Remote}) ->
     io:format("Tracking remote peer: ~p :: ~p~n", [Peer, Pid]),
     {noreply, State#state{remote_peers=Remote2}};
 
-handle_cast({request_peer_pid, From, PeerId}, State=#state{peers=Peers}) ->
+handle_cast({request_peer_pid, From, PeerId}, State) ->
     %% TODO: Confusing that we use {Ensemble, PeerId} as PeerId
-    case orddict:find(PeerId, Peers) of
-        error ->
+    {Ensemble, Id} = PeerId,
+    case get_peer_pid(Ensemble, Id) of
+        undefined ->
             ok;
-        {ok, Pid} ->
+        Pid ->
             typed_cast(From, {peer_pid, PeerId, Pid})
     end,
     {noreply, State};
@@ -530,7 +531,9 @@ request_remote_peers(State=#state{remote_peers=Remote}) ->
 
 -spec request_peer_pid2(ensemble_id(), peer_id()) -> ok.
 request_peer_pid2(Ensemble, PeerId={_, Node}) ->
-    io:format("Requesting ~p/~p~n", [Ensemble, PeerId]),
+    %% io:format("Requesting ~p/~p~n", [Ensemble, PeerId]),
+    %% riak_ensemble_util:cast_unreliable({?MODULE, Node},
+    %%                                    {request_peer_pid, self(), {Ensemble, PeerId}}).
     typed_cast(Node, {request_peer_pid, self(), {Ensemble, PeerId}}).
 
 -spec local_ensembles(state()) -> [{ensemble_id(), [peer_id()]}].
