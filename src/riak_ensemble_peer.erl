@@ -497,8 +497,6 @@ should_transition(State=#state{last_views=LastViews}) ->
                              {failed, state()}.
 transition(State=#state{id=Id, fact=Fact}) ->
     Latest = hd(Fact#fact.views),
-    %% TODO: I don't think it's safe to update view_seq until after successfull commit
-    %% ViewSeq = {Fact#fact.epoch, Fact#fact.seq},
     NewFact = Fact#fact{views=[Latest]},
     case try_commit(NewFact, State) of
         {ok, State3} ->
@@ -1104,12 +1102,6 @@ latest_obj([{_,ObjB}|L], notfound, State) ->
 latest_obj([{_,ObjB}|L], ObjA, State=#state{mod=Mod}) ->
     LatestObj = riak_ensemble_backend:latest_obj(Mod, ObjA, ObjB),
     latest_obj(L, LatestObj, State).
-    %% A = {get_obj(epoch, ObjA, State), get_obj(seq, ObjA, State)},
-    %% B = {get_obj(epoch, ObjB, State), get_obj(seq, ObjB, State)},
-    %% case B > A of
-    %%     true  -> latest_obj(L, ObjB, State);
-    %%     false -> latest_obj(L, ObjA, State)
-    %% end.
 
 -spec get_value(_,_,atom() | state()) -> any().
 get_value(Obj, Default, State) ->
