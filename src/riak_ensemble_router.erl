@@ -132,7 +132,32 @@ cast(Node, Ensemble, Msg) ->
     NumRouters = tuple_size(routers()),
     Pick = random(NumRouters),
     Router = element(Pick + 1, routers()),
-    gen_server:cast({Router, Node}, {ensemble_cast, Ensemble, Msg}).
+    %% gen_server:cast({Router, Node}, {ensemble_cast, Ensemble, Msg}).
+    case noconnect_cast({Router, Node}, {ensemble_cast, Ensemble, Msg}) of
+        nodedown ->
+            fail_cast(Msg),
+            ok;
+        ok ->
+            ok
+    end.
+
+noconnect_cast(Dest, Msg) ->
+    case catch erlang:send(Dest, {'$gen_cast', Msg}, [noconnect]) of
+	noconnect ->
+            spawn(fun() ->
+                          case Dest of
+                              {_, Node} ->
+                                  net_adm:ping(Node);
+                              Pid when is_pid(Pid) ->
+                                  net_adm:ping(node(Pid));
+                              _ ->
+                                  ok
+                          end
+                  end),
+            nodedown;
+        _ ->
+            ok
+    end.
 
 %% TODO: Switch to using sidejob_config or copy thereof
 routers() ->
@@ -209,10 +234,19 @@ ensemble_cast(Ensemble, Msg) ->
 -spec handle_ensemble_cast(_,_) -> ok.
 handle_ensemble_cast({sync_send_event, From, Ref, Event, Timeout}, Pid) ->
     spawn(fun() ->
-                  %% TODO: Try/catch here and send nack for faster bail-out
-                  Result = gen_fsm:sync_send_event(Pid, Event, Timeout),
-                  From ! {Ref, Result}
+                  try
+                      Result = gen_fsm:sync_send_event(Pid, Event, Timeout),
+                      From ! {Ref, Result}
+                  catch
+                      _:_ ->
+                          From ! {Ref, timeout}
+                  end
           end),
     ok;
 handle_ensemble_cast(_, _Pid) ->
+    ok.
+
+fail_cast({sync_send_event, From, Ref, _Event, _Timeout}) ->
+    From ! {Ref, timeout};
+fail_cast(_) ->
     ok.
