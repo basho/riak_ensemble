@@ -157,8 +157,8 @@ kupdate(Node, Target, Key, Current, New, Timeout) ->
                     Expected ->
                         {ok, set_obj(value, New, Obj, State)};
                     _ ->
-                        io:format("Failed: ~p~nA: ~p~nB: ~p~n",
-                                  [Obj, Expected, {Epoch,Seq}]),
+                        %% io:format("Failed: ~p~nA: ~p~nB: ~p~n",
+                        %%           [Obj, Expected, {Epoch,Seq}]),
                         failed
                 end
         end,
@@ -247,7 +247,7 @@ probe({quorum_met, Replies}, State=#state{fact=Fact}) ->
     Existing = existing_leader(Replies, Latest),
     State2 = State#state{fact=Latest,
                          members=compute_members(Latest#fact.views)},
-    io:format("Latest: ~p~n", [Latest]),
+    %% io:format("Latest: ~p~n", [Latest]),
     maybe_follow(Existing, State2);
 probe({timeout, Replies}, State=#state{fact=Fact}) ->
     Latest = latest_fact(Replies, Fact),
@@ -275,7 +275,7 @@ maybe_follow(undefined, State) ->
 maybe_follow(Leader, State=#state{id=Leader}) ->
     election(init, set_leader(undefined, State));
 maybe_follow(Leader, State) ->
-    io:format("~p: Following ~p~n", [State#state.id, Leader]),
+    %% io:format("~p: Following ~p~n", [State#state.id, Leader]),
     following(init, set_leader(Leader, State)).
 
 sync(init, State) ->
@@ -284,7 +284,7 @@ sync(init, State) ->
     {next_state, sync, State2};
 sync({quorum_met, Replies}, State) ->
     {Result, State2} = mod_sync(Replies, State),
-    io:format("========~n~p~n~p~n~p~n~p~n========~n", [Replies, Result, State, State2]),
+    %% io:format("========~n~p~n~p~n~p~n~p~n========~n", [Replies, Result, State, State2]),
     case Result of
         ok ->
             probe(init, State2#state{trust=true});
@@ -307,7 +307,7 @@ sync(Msg, State) ->
 
 -spec election(_, state()) -> next_state().
 election(init, State) ->
-    io:format("~p/~p: starting election~n", [self(), State#state.id]),
+    %% io:format("~p/~p: starting election~n", [self(), State#state.id]),
     ?OUT("~p: starting election~n", [State#state.id]),
     State2 = set_timer(?ENSEMBLE_TICK + random:uniform(?ENSEMBLE_TICK),
                        election_timeout, State),
@@ -332,8 +332,8 @@ election({prepare, Id, NextEpoch, From}, State=#state{fact=Fact}) ->
             {next_state, election, State}
     end;
 election({commit, NewFact, From}, State) ->
-    io:format("##### ~p: commit :: ~p vs ~p~n",
-              [State#state.id, NewFact#fact.epoch, epoch(State)]),
+    %% io:format("##### ~p: commit :: ~p vs ~p~n",
+    %%           [State#state.id, NewFact#fact.epoch, epoch(State)]),
     Epoch = epoch(State),
     case NewFact#fact.epoch >= Epoch of
         true ->
@@ -358,9 +358,9 @@ prepare(init, State=#state{id=Id}) ->
     %% TODO: Change this hack where we keep old state and reincrement
     ?OUT("~p: prepare~n", [State#state.id]),
     {NextEpoch, _} = increment_epoch(State),
-    io:format("Preparing ~p to ~p :: ~p~n", [NextEpoch,
-                                             views(State),
-                                             get_peers(State#state.members, State)]),
+    %% io:format("Preparing ~p to ~p :: ~p~n", [NextEpoch,
+    %%                                          views(State),
+    %%                                          get_peers(State#state.members, State)]),
     State2 = send_all({prepare, Id, NextEpoch}, State),
     {next_state, prepare, State2};
 prepare({quorum_met, Replies}, State=#state{id=Id, fact=Fact}) ->
@@ -376,7 +376,7 @@ prepare({quorum_met, Replies}, State=#state{id=Id, fact=Fact}) ->
     leading(init, State3);
 prepare({timeout, _Replies}, State) ->
     %% TODO: Change this hack where we keep old state and reincrement
-    io:format("PREPARE FAILED: ~p~n", [_Replies]),
+    %% io:format("PREPARE FAILED: ~p~n", [_Replies]),
     %% {_, State2} = increment_epoch(State),
     probe(init, State);
 prepare(Msg, State) ->
@@ -408,7 +408,7 @@ leading(tick, State=#state{ensemble=Ensemble, id=Id}) ->
             step_down(State4),
             probe(init, set_leader(undefined, State4));
         {shutdown, State4} ->
-            io:format("Shutting down...~n"),
+            %% io:format("Shutting down...~n"),
             step_down(State4),
             spawn(fun() ->
                           riak_ensemble_peer_sup:stop_peer(Ensemble, Id)
@@ -564,7 +564,7 @@ following({prepare, Id, NextEpoch, From}=Msg, State=#state{fact=Fact}) ->
     end;
 following(follower_timeout, State) ->
     ?OUT("~p: follower_timeout from ~p~n", [State#state.id, leader(State)]),
-    io:format("~p: follower_timeout from ~p~n", [State#state.id, leader(State)]),
+    %% io:format("~p: follower_timeout from ~p~n", [State#state.id, leader(State)]),
     probe(init, set_leader(undefined, State#state{timer=undefined}));
 following(Msg, State) ->
     case following_kv(Msg, State) of
@@ -685,7 +685,7 @@ common({forward, _From, _Msg}, State, StateName) ->
     {next_state, StateName, State};
 common(Msg, State, StateName) ->
     ?OUT("~p: ~s/ignoring: ~p~n", [State#state.id, StateName, Msg]),
-    io:format("~p/~p: ~s/ignoring: ~p~n", [State#state.id, self(), StateName, Msg]),
+    %% io:format("~p/~p: ~s/ignoring: ~p~n", [State#state.id, self(), StateName, Msg]),
     nack(Msg, State),
     {next_state, StateName, State}.
 
@@ -698,7 +698,7 @@ common(_Msg, From, State, StateName) ->
 -spec nack(_, state()) -> ok.
 nack({probe, From}, State) ->
     ?OUT("~p: sending nack to ~p~n", [State#state.id, From]),
-    io:format("~p: sending nack to ~p~n", [State#state.id, From]),
+    %% io:format("~p: sending nack to ~p~n", [State#state.id, From]),
     reply(From, nack, State);
 nack({prepare, _, _, From}, State) ->
     ?OUT("~p: sending nack to ~p~n", [State#state.id, From]),
@@ -708,7 +708,7 @@ nack({commit, _, From}, State) ->
     reply(From, nack, State);
 nack({get, _, _, _, From}, State) ->
     ?OUT("~p: sending nack to ~p~n", [State#state.id, From]),
-    io:format("~p: sending nack to ~p~n", [State#state.id, From]),
+    %% io:format("~p: sending nack to ~p~n", [State#state.id, From]),
     reply(From, nack, State);
 nack({put, _, _, _, _, From}, State) ->
     ?OUT("~p: sending nack to ~p~n", [State#state.id, From]),
@@ -798,7 +798,7 @@ maybe_restart_worker(Pid, State=#state{workers=Workers, ets=ETS}) ->
     WL1 = tuple_to_list(Workers),
     WL2 = [case WorkerPid of
                Pid ->
-                   io:format("Restarting worker~n"),
+                   %% io:format("Restarting worker~n"),
                    start_worker(ETS);
                _ ->
                    WorkerPid
@@ -816,7 +816,7 @@ reset_workers(#state{workers=Workers}) ->
              end
          end || Pid <- WL],
     %% Pre-existing monitors will also fire, re-creating workers in handle_info
-    io:format("Killed all workers~n"),
+    %% io:format("Killed all workers~n"),
     ok.
 
 pause_workers(#state{workers=Workers, ets=ETS}) ->
@@ -865,10 +865,10 @@ following_kv({get, Key, Peer, Epoch, From}, State) ->
                                                                             {Peer, Epoch},
                                                                             {leader(State),
                                                                              epoch(State)}]),
-            io:format("~p: sending nack to ~p for invalid request: ~p != ~p~n", [State#state.id, Peer,
-                                                                                 {Peer, Epoch},
-                                                                                 {leader(State),
-                                                                                  epoch(State)}]),
+            %% io:format("~p: sending nack to ~p for invalid request: ~p != ~p~n", [State#state.id, Peer,
+            %%                                                                      {Peer, Epoch},
+            %%                                                                      {leader(State),
+            %%                                                                       epoch(State)}]),
             reply(From, nack, State),
             {next_state, following, State}
     end;
@@ -1088,7 +1088,7 @@ obj_sequence(ETS, Epoch) ->
         Seq + ObjSeq
     catch
         _:_ ->
-            io:format("EE: ~p~n", [ets:tab2list(ETS)]),
+            %% io:format("EE: ~p~n", [ets:tab2list(ETS)]),
             throw(die)
     end.
 
@@ -1140,9 +1140,9 @@ init([Mod, Ensemble, Id, Views, Args]) ->
                    mod=Mod,
                    modstate=riak_ensemble_backend:start(Mod, Ensemble, Id, Args)},
     State2 = local_commit(State#state.fact, State),
-    io:format("S: ~p~n", [State2]),
+    %% io:format("S: ~p~n", [State2]),
     gen_fsm:send_event(self(), init),
-    io:format("I: ~p~n", [{{pid, {Ensemble, Id}}, self()}]),
+    %% io:format("I: ~p~n", [{{pid, {Ensemble, Id}}, self()}]),
     ets:insert(em, [{{pid, {Ensemble, Id}}, self()},
                     {{ets, {Ensemble, Id}}, ETS}]),
     case lists:member(Id, Members) of
@@ -1174,8 +1174,8 @@ handle_sync_event(_Event, _From, StateName, State) ->
     {reply, Reply, StateName, State}.
 
 %% -spec handle_info(_, atom(), state()) -> next_state().
-handle_info({'DOWN', _, _, Pid, Reason}, StateName, State) ->
-    io:format("Pid down for: ~p~n", [Reason]),
+handle_info({'DOWN', _, _, Pid, _Reason}, StateName, State) ->
+    %% io:format("Pid down for: ~p~n", [Reason]),
     State2 = maybe_restart_worker(Pid, State),
     {next_state, StateName, State2};
 handle_info(quorum_timeout, StateName, State) ->
@@ -1266,7 +1266,7 @@ existing_leader(Replies, #fact{leader=undefined, views=Views}) ->
         [] ->
             undefined;
         [{Leader, _Count}|_] ->
-    io:format("----~n~p~n~p~n-----~n", [Replies, Leader]),
+            %% io:format("----~n~p~n~p~n-----~n", [Replies, Leader]),
             Leader
     end;
 existing_leader(_Replies, #fact{leader=Leader}) ->
