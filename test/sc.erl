@@ -24,11 +24,11 @@
                        }).
 
 %% -define(BUCKET, <<"test">>).
--define(BUCKET, <<"c~test">>).
+-define(BUCKET, {<<"c">>, <<"c~test">>}).
 -define(KEY, 3).
 -define(ETS, sc).
 
--define(SINGLE_NODE, true).
+%% -define(SINGLE_NODE, true).
 
 -define(TIMEOUT, 1000).
 
@@ -657,8 +657,8 @@ gp() ->
     eqc:quickcheck(eqc:numtests(1000,prop_sc3(Nodes, Concurrency))).
 
 go(Runs) ->
-    Nodes = ['dev1@127.0.0.1'],
-    %% Nodes = ['dev1@127.0.0.1', 'dev2@127.0.0.1', 'dev3@127.0.0.1'],
+    %% Nodes = ['dev1@127.0.0.1'],
+    Nodes = ['dev1@127.0.0.1', 'dev2@127.0.0.1', 'dev3@127.0.0.1'],
     Concurrency = 4,
     eqc:quickcheck(eqc:numtests(Runs, prop_sc(Nodes, Concurrency))),
     ok.
@@ -856,7 +856,7 @@ prop_sc(Nodes, Concurrency) ->
                 %% io:format("Acked: ~p~n", [S#state.acked]),
                 io:format("Success: ~p~n", [Success]),
                 C = ets:lookup_element(?ETS, {client,1}, 2),
-                case riakc_pb_socket:get(C, ?BUCKET, <<?KEY:64/integer>>, ?TIMEOUT) of
+                case result(riakc_pb_socket:get(C, ?BUCKET, <<?KEY:64/integer>>, ?TIMEOUT)) of
                     {ok, Obj} ->
                         Val = binary_to_term(riakc_obj:get_value(Obj)),
                         io:format("Obj: ~p~n", [Val]),
