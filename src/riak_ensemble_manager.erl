@@ -159,7 +159,7 @@ root_check_ensemble(EnsembleId, #ensemble_info{members=Peers, seq=Seq}) ->
                     case orddict:find(EnsembleId, Ensembles) of
                         {ok, CurInfo=#ensemble_info{members=CurPeers, seq=CurSeq}}
                           when (CurPeers =/= Peers) and (CurSeq < Seq) ->
-                            io:format("######## ~p/~p // ~p/~p~n", [CurSeq, CurPeers, Seq, Peers]),
+                            %% io:format("######## ~p/~p // ~p/~p~n", [CurSeq, CurPeers, Seq, Peers]),
                             NewInfo = CurInfo#ensemble_info{members=Peers, seq=Seq},
                             orddict:store(EnsembleId, NewInfo, Ensembles);
                         _ ->
@@ -294,7 +294,7 @@ handle_cast({peer_pid, Peer, Pid}, State=#state{remote_peers=Remote}) ->
     Remote2 = orddict:store(Peer, Pid, Remote),
     ets:insert(em, {{pid, Peer}, Pid}),
     erlang:monitor(process, Pid),
-    io:format("Tracking remote peer: ~p :: ~p~n", [Peer, Pid]),
+    %% io:format("Tracking remote peer: ~p :: ~p~n", [Peer, Pid]),
     {noreply, State#state{remote_peers=Remote2}};
 
 handle_cast({request_peer_pid, From, PeerId}, State) ->
@@ -393,7 +393,7 @@ code_change(_OldVsn, State, _Extra) ->
 reload_state() ->
     case load_saved_state() of
         {ok, State} ->
-            io:format("reloaded~n"),
+            %% io:format("reloaded~n"),
             State;
         not_found ->
             initial_state()
@@ -489,17 +489,17 @@ state_changed(State=#state{peers=Peers, ensembles=Ensembles}) ->
              {'$none', Info} ->
                  #ensemble_info{mod=Mod, args=Args, members=Bootstrap} = Info,
                  %% Start new peer
-                 io:format("Should start: ~p~n", [{Ensemble, Id, Bootstrap, Mod, Args}]),
+                 %% io:format("Should start: ~p~n", [{Ensemble, Id, Bootstrap, Mod, Args}]),
                  %% TODO: Make Bootstrap be views not membership
                  NewPid = riak_ensemble_peer_sup:start_peer(Mod, Ensemble, Id, [Bootstrap], Args),
                  {PeerId, NewPid};
              {undefined, '$none'} ->
                  {PeerId, undefined};
-             {Pid, '$none'} ->
+             {_Pid, '$none'} ->
                  %% Stop running peer
-                 io:format("Should stop: ~p~n", [{Ensemble, Id}]),
-                 io:format("-- ~p~n", [orddict:fetch({Ensemble, Id}, Peers)]),
-                 io:format("Stopping: ~p~n", [Pid]),
+                 %% io:format("Should stop: ~p~n", [{Ensemble, Id}]),
+                 %% io:format("-- ~p~n", [orddict:fetch({Ensemble, Id}, Peers)]),
+                 %% io:format("Stopping: ~p~n", [Pid]),
                  riak_ensemble_peer_sup:stop_peer(Ensemble, Id),
                  {PeerId, undefined};
              {Pid, _} ->

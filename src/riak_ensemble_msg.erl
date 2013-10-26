@@ -236,7 +236,6 @@ quorum_met(Replies, Id, [Members|Views]) ->
             nack;
        (Heard + length(Nacks)) =:= length(Members) ->
             ?OUT("~p//~nM: ~p~nV: ~p~nN: ~p: nack~n", [Id, Members, Valid, Nacks]),
-            io:format("~p//~nM: ~p~nV: ~p~nN: ~p: nack~n", [Id, Members, Valid, Nacks]),
             nack;
        true ->
             ?OUT("~p//~nM: ~p~nV: ~p~nN: ~p: false~n", [Id, Members, Valid, Nacks]),
