@@ -23,6 +23,7 @@
 -module(riak_ensemble_msg).
 
 -export([send_all/4,
+         send_all/5,
          blocking_send_all/4,
          wait_for_quorum/1,
          handle_reply/4,
@@ -38,6 +39,7 @@
 
 -record(msgstate, {awaiting = undefined,
                    timer    = undefined,
+                   required = quorum,
                    id       = undefined,
                    views    = [],
                    replies  = []}).
@@ -58,18 +60,21 @@
 
 %%%===================================================================
 
+send_all(Msg, Id, Peers, Views) ->
+    send_all(Msg, Id, Peers, Views, quorum).
+
 -spec send_all(msg(), peer_id(), peer_pids(), views()) -> msg_state().
-send_all(_Msg, Id, _Peers=[{Id,_}], _Views) ->
+send_all(_Msg, Id, _Peers=[{Id,_}], _Views, _Required) ->
     ?OUT("~p: self-sending~n", [Id]),
     gen_fsm:send_event(self(), {quorum_met, []}),
     #msgstate{awaiting=undefined, timer=undefined, replies={}, id=Id};
-send_all(Msg, Id, Peers, Views) ->
+send_all(Msg, Id, Peers, Views, Required) ->
     ?OUT("~p/~p: sending to ~p: ~p~n", [Id, self(), Peers, Msg]),
     {ReqId, Request} = make_request(Msg),
     _ = [maybe_send_request(Id, Peer, ReqId, Request) || Peer={PeerId,_} <- Peers,
                                                          PeerId =/= Id],
     Timer = send_after(?ENSEMBLE_TICK, self(), quorum_timeout),
-    #msgstate{awaiting=ReqId, timer=Timer, replies=[], id=Id, views=Views}.
+    #msgstate{awaiting=ReqId, timer=Timer, replies=[], id=Id, views=Views, required=Required}.
 
 %%%===================================================================
 
@@ -228,18 +233,33 @@ quorum_timeout(MsgState=#msgstate{replies=Replies}) ->
 %%%===================================================================
 
 -spec quorum_met([peer_reply()], msg_state()) -> true | false | nack.
-quorum_met(Replies, #msgstate{id=Id, views=Views}) ->
-    quorum_met(Replies, Id, Views).
+quorum_met(Replies, #msgstate{id=Id, views=Views, required=Required}) ->
+    quorum_met(Replies, Id, Views, Required).
+
+quorum_met(Replies, Id, Views) ->
+    quorum_met(Replies, Id, Views, quorum).
 
 -spec quorum_met([peer_reply()], peer_id(), views()) -> true | false | nack.
-quorum_met(_Replies, _Id, []) ->
+quorum_met(_Replies, _Id, [], _Required) ->
+    %% TODO: Consider if Required > 0 should actually fail here
     true;
-quorum_met(Replies, Id, [Members|Views]) ->
+quorum_met(Replies, Id, [Members|Views], Required) ->
     Filtered = [Reply || Reply={Peer,_} <- Replies,
                          lists:member(Peer, Members)],
     {Valid, Nacks} = find_valid(Filtered),
-    Quorum = length(Members) div 2 + 1,
-    Heard = case lists:member(Id, Members) of
+    Quorum = case Required of
+                 quorum ->
+                     length(Members) div 2 + 1;
+                 other ->
+                     %% TODO: This is a hack. Fix.
+                     length(Members) div 2 + 1;
+                 all ->
+                     _ = lager:info("Quorum: all = ~p", [length(Members)]),
+                     _ = lager:info("Filtered: ~p", [Filtered]),
+                     length(Members)
+             end,
+    %% TODO: Use of other is a hack. Fix.
+    Heard = case (Required =/= other) andalso lists:member(Id, Members) of
                 true ->
                     length(Valid) + 1;
                 false ->

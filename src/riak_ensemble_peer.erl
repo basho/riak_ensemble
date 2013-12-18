@@ -28,13 +28,13 @@
 %% API
 -export([start_link/4, start/4]).
 -export([join/2, join/3, update_members/3, get_leader/1, backend_pong/1]).
--export([sync_complete/1, sync_failed/1]).
+-export([sync_complete/2, sync_failed/1, sync_get/3]).
 -export([kget/4, kupdate/6, kput_once/5, kover/5, kmodify/6, kdelete/4,
          ksafe_delete/5, obj_value/2, obj_value/3]).
 -export([probe/2, election/2, prepare/2, leading/2, following/2,
          probe/3, election/3, prepare/3, leading/3, following/3]).
--export([pending/2, sync/2, prefollow/2,
-         pending/3, sync/3, prefollow/3]).
+-export([pending/2, sync/2, all_sync/2, check_sync/2, prefollow/2,
+         pending/3, sync/3, all_sync/3, check_sync/3, prefollow/3]).
 
 %% Support/debug API
 -export([count_quorum/2, check_quorum/2, force_state/2]).
@@ -152,13 +152,16 @@ count_quorum(Ensemble, Timeout) ->
 get_leader(Pid) when is_pid(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, get_leader, infinity).
 
--spec sync_complete(pid()) -> ok.
-sync_complete(Pid) when is_pid(Pid) ->
-    gen_fsm:send_event(Pid, sync_complete).
+-spec sync_complete(pid(), [peer_id()]) -> ok.
+sync_complete(Pid, Peers) when is_pid(Pid) ->
+    gen_fsm:send_event(Pid, {sync_complete, Peers}).
 
 -spec sync_failed(pid()) -> ok.
 sync_failed(Pid) when is_pid(Pid) ->
     gen_fsm:send_event(Pid, sync_failed).
+
+sync_get(Target, Key, Timeout) ->
+    riak_ensemble_router:sync_send_event(Target, {sync_get, Key}, Timeout).
 
 backend_pong(Pid) when is_pid(Pid) ->
     gen_fsm:send_event(Pid, backend_pong).
@@ -372,34 +375,106 @@ maybe_follow(Leader, State) ->
 
 sync(init, State) ->
     ?OUT("~p: sync~n", [State#state.id]),
-    State2 = send_all(sync, State),
+    _ = lager:info("~p is UNtrusted", [State#state.id]),
+    _ = lager:info("members: ~p :: ~p~n", [State#state.id, State#state.members]),
+    _ = lager:info("views: ~p :: ~p~n", [State#state.id, views(State)]),
+    State2 = send_all(sync, other, State),
     {next_state, sync, State2};
 sync({quorum_met, Replies}, State) ->
     {Result, State2} = mod_sync(Replies, State),
     %% io:format("========~n~p~n~p~n~p~n~p~n========~n", [Replies, Result, State, State2]),
     case Result of
         ok ->
+            _ = lager:info("~p is trusted", [State#state.id]),
             probe(init, State2#state{trust=true});
         async ->
-            {next_state, sync, State2};
+            _ = lager:info("~p is async", [State#state.id]),
+            {next_state, sync, State2#state{tmp=Replies}};
         {error, _} ->
             ?OUT("~p/~p: error when syncing: ~p~n", [State#state.id, self(), Result]),
-            probe(init, State2)
+            retry(State2)
     end;
 sync({timeout, _Replies}, State) ->
-    probe(init, State);
-sync(sync_complete, State) ->
-    %% Asynchronous sync complete
-    probe(init, State#state{trust=true});
+    _ = lager:info("timeout: trying all_sync"),
+    all_sync(init, State);
+sync({sync_complete, Peers}, State) ->
+    %% %% Asynchronous sync complete
+    %% _ = lager:info("~nCompletePeers: ~p", [Peers]),
+    %% _ = lager:info("~p is trusted", [State#state.id]),
+    %% probe(init, State#state{trust=true});
+    check_sync({init, Peers}, State);
 sync(sync_failed, State) ->
     %% Asynchronous sync failed
-    probe(init, State);
+    retry(State);
 sync(Msg, State) ->
     common(Msg, State, sync).
 
 -spec sync(_, fsm_from(), state()) -> {next_state, sync, state()}.
 sync(Msg, From, State) ->
     common(Msg, From, State, sync).
+
+check_sync({init, Peers}, State) ->
+    _ = lager:info("~nCompletePeers: ~p~nOldReplies: ~p", [Peers, State#state.tmp]),
+    case Peers of
+        [] ->
+            check_sync({quorum_met, []}, State);
+        _ ->
+            %% TODO: Can't reuse sync in case it's not pure or is expensive
+            State2 = send_peers(sync, Peers, State),
+            {next_state, check_sync, State2}
+    end;
+check_sync({quorum_met, _Replies}, State) ->
+    %% Asynchronous sync complete
+    _ = lager:info("CHECK: Success!"),
+    _ = lager:info("~p is trusted", [State#state.id]),
+    probe(init, State#state{trust=true});
+check_sync({timeout, _Replies}, State) ->
+    _ = lager:info("CHECK: FAILED!!!!!!"),
+    _ = lager:info("check_sync: timeout"),
+    retry(State);
+check_sync(Msg, State) ->
+    common(Msg, State, check_sync).
+
+check_sync(Msg, From, State) ->
+    common(Msg, From, State, check_sync).
+
+all_sync(init, State) ->
+    State2 = send_all(all_sync, all, State),
+    {next_state, all_sync, State2};
+all_sync({timeout, _Replies}, State) ->
+    _ = lager:info("timeout"),
+    retry(State);
+all_sync({quorum_met, Replies}, State) ->
+    {Result, State2} = mod_sync(Replies, State),
+    %% io:format("========~n~p~n~p~n~p~n~p~n========~n", [Replies, Result, State, State2]),
+    case Result of
+        ok ->
+            _ = lager:info("~p is trusted", [State#state.id]),
+            probe(init, State2#state{trust=true});
+        async ->
+            _ = lager:info("~p is async", [State#state.id]),
+            {next_state, all_sync, State2};
+        {error, _} ->
+            ?OUT("~p/~p: error when syncing: ~p~n", [State#state.id, self(), Result]),
+            retry(State2)
+    end;
+all_sync({sync_complete, _Peers}, State) ->
+    %% Asynchronous sync complete
+    _ = lager:info("~p is trusted (all sync)", [State#state.id]),
+    probe(init, State#state{trust=true});
+all_sync(sync_failed, State) ->
+    %% Asynchronous sync failed
+    retry(State);
+all_sync(Msg, State) ->
+    common(Msg, State, all_sync).
+
+all_sync(Msg, From, State) ->    
+    common(Msg, From, State, all_sync).
+
+retry(State) ->
+    %% check_ensemble(State),
+    %% probe(delay, State);
+    probe(init, State).
 
 -spec election(_, state()) -> next_state().
 election(init, State) ->
@@ -854,6 +929,17 @@ common({probe, From}, State=#state{fact=Fact}, StateName) ->
     reply(From, Fact, State),
     {next_state, StateName, State};
 common({sync, From}, State, StateName) ->
+    State2 = case State#state.trust of
+                 true ->
+                     _ = lager:info("SyncR: ~p :: true", [State#state.id]),
+                     mod_sync_request(From, State);
+                 false ->
+                     _ = lager:info("SyncR: ~p :: false", [State#state.id]),
+                     reply(From, nack, State),
+                     State
+             end,
+    {next_state, StateName, State2};
+common({all_sync, From}, State, StateName) ->
     State2 = mod_sync_request(From, State),
     {next_state, StateName, State2};
 common(tick, State, StateName) ->
@@ -875,6 +961,10 @@ common({force_state, {Epoch, Seq}}, From, State, StateName) ->
     State2 = set_epoch(Epoch, set_seq(Seq, State)),
     gen_fsm:reply(From, ok),
     {next_state, StateName, State2};
+common({sync_get, Key}, From, State, StateName) ->
+    _ = lager:info("sync_get(~p) from ~p", [Key, From]),
+    gen_fsm:reply(From, lala),
+    {next_state, StateName, State};
 common(_Msg, From, State, StateName) ->
     ?OUT("~p: ~s/ignoring: ~p~n", [State#state.id, StateName, _Msg]),
     send_reply(From, nack),
@@ -1468,10 +1558,24 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-send_all(Msg, State=#state{members=Members, id=Id}) ->
+send_all(Msg, State) ->
+    send_all(Msg, quorum, State).
+
+-spec send_all(_,state()) -> state().
+send_all(Msg, Required, State=#state{members=Members}) ->
+    send_peers(Msg, Members, Required, State).
+
+send_peers(Msg, Members, State) ->
+    Views = [Members],
+    send_peers(Msg, Members, all, Views, State).
+
+send_peers(Msg, Members, Required, State) ->
     Views = views(State),
+    send_peers(Msg, Members, Required, Views, State).
+
+send_peers(Msg, Members, Required, Views, State=#state{id=Id}) ->
     Peers = get_peers(Members, State),
-    Awaiting = riak_ensemble_msg:send_all(Msg, Id, Peers, Views),
+    Awaiting = riak_ensemble_msg:send_all(Msg, Id, Peers, Views, Required),
     State#state{awaiting=Awaiting}.
 
 -spec blocking_send_all(any(), state()) -> {riak_ensemble_msg:future(), state()}.
