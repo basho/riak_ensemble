@@ -32,7 +32,7 @@
          set_obj/4,
          latest_obj/3,
          reply/2,
-         sync_complete/1,
+         sync_complete/2,
          sync_failed/1]).
 
 %%===================================================================
@@ -139,9 +139,9 @@ reply({From, Id}, Reply) ->
     riak_ensemble_msg:reply(From, Id, Reply),
     ok.
 
--spec sync_complete(pid()) -> ok.
-sync_complete(Pid) ->
-    riak_ensemble_peer:sync_complete(Pid).
+-spec sync_complete(pid(), [peer_id()]) -> ok.
+sync_complete(Pid, Peers) ->
+    riak_ensemble_peer:sync_complete(Pid, Peers).
 
 -spec sync_failed(pid()) -> ok.
 sync_failed(Pid) ->
