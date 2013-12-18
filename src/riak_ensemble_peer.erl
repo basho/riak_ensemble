@@ -99,7 +99,7 @@
 -spec start_link(module(), ensemble_id(), peer_id(), views(), [any()])
                 -> ignore | {error, _} | {ok, pid()}.
 start_link(Mod, Ensemble, Id, Views, Args) ->
-    gen_fsm:start_link(?MODULE, [Mod, Ensemble, Id, Views, Args], [{debug, [trace]}]).
+    gen_fsm:start_link(?MODULE, [Mod, Ensemble, Id, Views, Args], []).
 
 -spec start(module(), ensemble_id(), peer_id(), views(), [any()])
            -> ignore | {error, _} | {ok, pid()}.
