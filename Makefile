@@ -29,8 +29,9 @@ $(DEPS_PLT):
 
 dialyzer: $(DEPS_PLT)
 #	dialyzer --fullpath --plt $(DEPS_PLT) -Wrace_conditions -Wunderspecs ./ebin
-	dialyzer --fullpath --plt $(DEPS_PLT) -Wrace_conditions -Wunderspecs -Werror_handling -Wunmatched_returns -r ./ebin
+	dialyzer --fullpath --plt $(DEPS_PLT) -Wrace_conditions -Werror_handling -Wunmatched_returns -r ./ebin
+#	dialyzer --fullpath --plt $(DEPS_PLT) -Wrace_conditions -Wunderspecs -Werror_handling -Wunmatched_returns -r ./ebin
 #	dialyzer --fullpath --plt $(DEPS_PLT) -Wrace_conditions -Wunderspecs -Woverspecs -r ./ebin
 
 typer:
-	typer --plt $(DEPS_PLT) -r ./src
+	typer --plt $(DEPS_PLT) -I include -r ./src

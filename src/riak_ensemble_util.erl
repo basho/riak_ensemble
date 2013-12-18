@@ -23,7 +23,8 @@
          sha/1,
          md5/1,
          orddict_delta/2,
-         cast_unreliable/2]).
+         cast_unreliable/2,
+         shuffle/1]).
 
 %%===================================================================
 
@@ -144,3 +145,12 @@ cast_unreliable(Dest, Request) ->
 bang_unreliable(Dest, Msg) ->
     catch erlang:send(Dest, Msg, [noconnect, nosuspend]),
     Msg.
+
+shuffle([]) ->
+    [];
+shuffle(L=[_]) ->
+    L;
+shuffle(L) ->
+    Range = length(L),
+    L2 = [{random:uniform(Range), E} || E <- L],
+    [E || {_, E} <- lists:sort(L2)].

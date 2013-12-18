@@ -135,8 +135,7 @@ cast(Node, Ensemble, Msg) ->
     %% gen_server:cast({Router, Node}, {ensemble_cast, Ensemble, Msg}).
     case noconnect_cast({Router, Node}, {ensemble_cast, Ensemble, Msg}) of
         nodedown ->
-            fail_cast(Msg),
-            ok;
+            ok = fail_cast(Msg);
         ok ->
             ok
     end.
@@ -247,6 +246,7 @@ handle_ensemble_cast(_, _Pid) ->
     ok.
 
 fail_cast({sync_send_event, From, Ref, _Event, _Timeout}) ->
-    From ! {Ref, timeout};
+    From ! {Ref, timeout},
+    ok;
 fail_cast(_) ->
     ok.

@@ -94,6 +94,8 @@
 %% by an elected leader. Can be used to implement custom housekeeping.
 -callback tick(epoch(), seq(), peer_id(), views(), state()) -> state().
 
+-callback ping(state()) -> {ok|async|failed, state()}.
+
 %%===================================================================
 
 start(Mod, Ensemble, Id, Args) ->

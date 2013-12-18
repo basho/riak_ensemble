@@ -50,7 +50,8 @@
 -type msg() :: term().
 -type peer_nack()  :: {peer_id(), nack}.
 -type msg_from()   :: {riak_ensemble_msg,pid(),reference()}.
--type maybe_from() :: undefined | {pid(),reference()}.
+-type from()       :: {pid(),reference()}.
+-type maybe_from() :: undefined | from().
 
 -type future() :: undefined | pid().
 -export_type([future/0, msg_from/0]).
@@ -88,6 +89,7 @@ send_request({PeerId, PeerPid}, ReqId, Event) ->
     case PeerPid of
         undefined ->
             ?OUT("~p: Sending offline nack for ~p~n", [self(), PeerId]),
+            _ = lager:info("Sending offline nack for ~p :: ~p", [PeerId, Event]),
             From = make_from(self(), ReqId),
             reply(From, PeerId, nack);
         _ ->
@@ -134,14 +136,23 @@ collect_replies(Replies, Parent, Id, Views, ReqId) ->
         {waiting, From, Ref} when is_pid(From), is_reference(Ref) ->
             check_enough(Replies, {From, Ref}, Id, Views, ReqId)
     after ?ENSEMBLE_TICK ->
-            collect_timeout(Replies, Parent)
+            maybe_timeout(Replies, Parent, Id, Views)
     end.
 
--spec collect_timeout([peer_reply()], maybe_from()) -> ok.
-collect_timeout(Replies, undefined) ->
+maybe_timeout(Replies, undefined, Id, Views) ->
     receive {waiting, From, Ref} ->
-            collect_timeout(Replies, {From, Ref})
+            case quorum_met(Replies, Id, Views) of
+                true ->
+                    From ! {Ref, ok, Replies},
+                    ok;
+                _ ->
+                    collect_timeout(Replies, {From, Ref})
+            end
     end;
+maybe_timeout(Replies, Parent, _Id, _Views) ->
+    collect_timeout(Replies, Parent).
+
+-spec collect_timeout([peer_reply()], from()) -> ok.
 collect_timeout(Replies, {From, Ref}) ->
     From ! {Ref, timeout, Replies},
     ok.
@@ -203,9 +214,15 @@ add_reply(Peer, Reply, MsgState=#msgstate{timer=Timer}) ->
     end.
 
 -spec quorum_timeout(msg_state()) -> msg_state().
-quorum_timeout(#msgstate{replies=Replies}) ->
+quorum_timeout(MsgState=#msgstate{replies=Replies}) ->
     {Valid, _Nacks} = find_valid(Replies),
-    gen_fsm:send_event(self(), {timeout, Valid}),
+    case quorum_met(Replies, MsgState) of
+        true ->
+            _ = lager:info("HERE: ~p", [Valid]),
+            gen_fsm:send_event(self(), {quorum_met, Valid});
+        _ ->
+            gen_fsm:send_event(self(), {timeout, Valid})
+    end,
     #msgstate{awaiting=undefined, timer=undefined, replies=[]}.
 
 %%%===================================================================
