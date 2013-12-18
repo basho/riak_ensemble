@@ -99,7 +99,7 @@
 -spec start_link(module(), ensemble_id(), peer_id(), views(), [any()])
                 -> ignore | {error, _} | {ok, pid()}.
 start_link(Mod, Ensemble, Id, Views, Args) ->
-    gen_fsm:start_link(?MODULE, [Mod, Ensemble, Id, Views, Args], []).
+    gen_fsm:start_link(?MODULE, [Mod, Ensemble, Id, Views, Args], [{debug, [trace]}]).
 
 -spec start(module(), ensemble_id(), peer_id(), views(), [any()])
            -> ignore | {error, _} | {ok, pid()}.
@@ -437,7 +437,7 @@ leading({update_members, Changes}, _From, State=#state{fact=Fact,
             ViewSeq = {Fact#fact.epoch, Fact#fact.seq},
             NewFact = Fact#fact{views=Views2, view_seq=ViewSeq},
             pause_workers(State),
-            case try_commit(NewFact, State) of
+            case try_commit_new_view(NewFact, State) of
                 {ok, State3} ->
                     unpause_workers(State),
                     {reply, ok, leading, State3};
@@ -511,6 +511,20 @@ transition(State=#state{id=Id, fact=Fact}) ->
             end;
         {failed, _}=Failed ->
             Failed
+    end.
+
+-spec try_commit_new_view(fact(), state()) -> {failed, state()} | {ok, state()}.
+try_commit_new_view(Fact, State) ->
+    Views = views(State),
+    NewFact = increment_sequence(Fact),
+    {Future, State2} = blocking_send_all({commit, NewFact}, State),
+    State3 = local_commit(NewFact, State2),
+    case wait_for_quorum(Future) of
+        {quorum_met, _Replies} ->
+            State4 = State3#state{last_views=Views},
+            {ok, State4};
+        {timeout, _Replies} ->
+            {failed, set_leader(undefined, State3)}
     end.
 
 -spec try_commit(fact(), state()) -> {failed, state()} | {ok, state()}.
