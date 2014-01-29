@@ -170,6 +170,8 @@ load_saved_data(File) ->
                         {ok, binary_to_term(Binary)}
                     catch
                         _:_ ->
+                            lager:warning("Corrupted state detected. "
+                                          "Reverting to empty state."),
                             not_found
                     end;
                 _ ->

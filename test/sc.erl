@@ -5,6 +5,8 @@
 -include_lib("eqc/include/eqc_statem.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
+%% -define(SINGLE_NODE, true).
+
 -record(state, {init = false,
                 num_workers,
                 known,
@@ -16,19 +18,19 @@
                 partitioned,
                 values}).
 
+-ifdef(SINGLE_NODE).
 -record(ensemble_info, {mod,
                         args,
                         leader,
                         members,
                         seq
                        }).
+-endif.
 
 %% -define(BUCKET, <<"test">>).
 -define(BUCKET, {<<"c">>, <<"c~test">>}).
 -define(KEY, 3).
 -define(ETS, sc).
-
-%% -define(SINGLE_NODE, true).
 
 -define(TIMEOUT, 1000).
 
@@ -587,7 +589,7 @@ may_fail(Prior, Current, _) ->
             (value(A) =/= value(B)) or (vclock(A) =/= vclock(B))
     end.
 
-may_timeout(#state{partitioned=Partitioned}) ->
+may_timeout(#state{}) ->
     %% TODO: Make this stronger, eg. related to reachable quorum
     %% Partitioned =/= undefined.
     true.
@@ -636,7 +638,10 @@ result(X) ->
 
 sc_test_() ->
     Duration = 5,
-    {timeout, Duration*2, fun() -> sc_test_body(Duration) end}.
+    %% {timeout, Duration*2, fun() -> sc_test_body(Duration) end}.
+    {timeout, Duration*2, fun() ->
+                                  ?debugMsg("Test disabled. Skipping")
+                          end}.
 sc_test_body(Duration) ->
     net_kernel:start(['eunit@127.0.0.1']),
     erlang:set_cookie(node(), riak),
@@ -821,8 +826,8 @@ get_success([X|Rest], Success, Maybe) ->
             %% Potentially failed delete
             io:format("Failed~n"),
             get_success(Rest, [], Maybe ++ Success);
-        Other ->
-            %% io:format("Other: ~p~n", [Other]),
+        _Other ->
+            %% io:format("Other: ~p~n", [_Other]),
             get_success(Rest, Success, Maybe)
     end.
 
@@ -921,9 +926,9 @@ check(Num) ->
                     {Count, check, Val};
                 {error, notfound} ->
                     {Count, check, empty};
-                Other ->
+                _Other ->
                     %% TODO: Really should make check wait for quorum and always succeed
-                    %% io:format("Other: ~p~n", [Other]),
+                    %% io:format("Other: ~p~n", [_Other]),
                     {Count, true}
             end;
         _ ->
