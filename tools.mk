@@ -1,11 +1,13 @@
+REBAR ?= ./rebar
+
 test: compile
-	./rebar eunit skip_deps=true
+	${REBAR} eunit skip_deps=true
 
 docs:
-	./rebar doc skip_deps=true
+	${REBAR} doc skip_deps=true
 
 xref: compile
-	./rebar xref skip_deps=true
+	${REBAR} xref skip_deps=true
 
 PLT ?= $(HOME)/.riak_combo_dialyzer_plt
 LOCAL_PLT = .local_dialyzer_plt
