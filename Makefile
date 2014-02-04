@@ -1,5 +1,5 @@
-DEPS_PLT=$(CURDIR)/.deps_plt
-DEPS=erts kernel stdlib crypto
+DIALYZER_APPS=erts kernel stdlib crypto
+DIALYZER_FLAGS ?= -Wunmatched_returns -Werror_handling
 
 REBAR ?= $(shell which rebar)
 
@@ -21,24 +21,7 @@ deps:
 compile:
 	$(REBAR) skip_deps=true compile
 
-eunit: compile
-	$(REBAR) skip_deps=true eunit
-
-test: compile eunit
-
-$(DEPS_PLT):
-	@echo Building local plt at $(DEPS_PLT)
-	@echo
-	dialyzer --output_plt $(DEPS_PLT) --build_plt --apps $(DEPS) -r deps
-
-xref:
-	$(REBAR) xref
-
-dialyzer: $(DEPS_PLT)
-#	dialyzer --fullpath --plt $(DEPS_PLT) -Wrace_conditions -Wunderspecs ./ebin
-	dialyzer --fullpath --plt $(DEPS_PLT) -Wrace_conditions -Werror_handling -Wunmatched_returns -r ./ebin
-#	dialyzer --fullpath --plt $(DEPS_PLT) -Wrace_conditions -Wunderspecs -Werror_handling -Wunmatched_returns -r ./ebin
-#	dialyzer --fullpath --plt $(DEPS_PLT) -Wrace_conditions -Wunderspecs -Woverspecs -r ./ebin
+include tools.mk
 
 typer:
 	typer --plt $(DEPS_PLT) -r ./src
