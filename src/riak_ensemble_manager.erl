@@ -46,11 +46,11 @@
 
 -include_lib("riak_ensemble_types.hrl").
 
--record(state, {version,
+-record(state, {version :: non_neg_integer(),
                 root :: [peer_id()],
                 root_leader :: leader_id(),
-                peers,
-                remote_peers,
+                peers :: [{{ensemble_id(), peer_id()}, pid()}],
+                remote_peers :: [{{ensemble_id(), peer_id()}, pid()}],
                 ensembles :: [{ensemble_id(), ensemble_info()}]
                }).
 

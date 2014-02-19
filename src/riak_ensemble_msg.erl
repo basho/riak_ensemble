@@ -36,11 +36,11 @@
 
 %%%===================================================================
 
--record(msgstate, {awaiting = undefined,
-                   timer    = undefined,
-                   id       = undefined,
-                   views    = [],
-                   replies  = []}).
+-record(msgstate, {awaiting = undefined :: 'undefined' | reqid(),
+                   timer    = undefined :: 'undefined' | reference(),
+                   id       :: peer_id(),
+                   views    = [] :: views(),
+                   replies  = [] :: [{peer_id(), any()}]}).
 
 -opaque msg_state() :: #msgstate{}.
 -export_type([msg_state/0]).
@@ -61,7 +61,7 @@
 send_all(_Msg, Id, _Peers=[{Id,_}], _Views) ->
     ?OUT("~p: self-sending~n", [Id]),
     gen_fsm:send_event(self(), {quorum_met, []}),
-    #msgstate{awaiting=undefined, timer=undefined, replies={}, id=Id};
+    #msgstate{awaiting=undefined, timer=undefined, replies=[], id=Id};
 send_all(Msg, Id, Peers, Views) ->
     ?OUT("~p/~p: sending to ~p: ~p~n", [Id, self(), Peers, Msg]),
     {ReqId, Request} = make_request(Msg),
@@ -73,6 +73,7 @@ send_all(Msg, Id, Peers, Views) ->
 %%%===================================================================
 
 -spec maybe_send_request(peer_id(), {peer_id(), maybe_pid()}, reqid(), msg()) -> ok.
+-ifdef(TEST).
 maybe_send_request(Id, {PeerId, PeerPid}, ReqId, Event) ->
     case riak_ensemble_test:maybe_drop(Id, PeerId) of
         true ->
@@ -82,6 +83,10 @@ maybe_send_request(Id, {PeerId, PeerPid}, ReqId, Event) ->
         false ->
             send_request({PeerId, PeerPid}, ReqId, Event)
     end.
+-else.
+maybe_send_request(_Id, {PeerId, PeerPid}, ReqId, Event) ->
+    send_request({PeerId, PeerPid}, ReqId, Event).
+-endif.
 
 -spec send_request({peer_id(), maybe_pid()}, reqid(), msg()) -> ok.
 send_request({PeerId, PeerPid}, ReqId, Event) ->

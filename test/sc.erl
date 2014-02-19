@@ -7,23 +7,22 @@
 
 %% -define(SINGLE_NODE, true).
 
--record(state, {init = false,
-                num_workers,
-                known,
-                nodes,
-                workers,
-                next_value = 0,
-                acked,
-                wait,
-                partitioned,
-                values}).
+-record(state, {init = false :: boolean(),
+                num_workers :: integer(),
+                known :: list(),
+                nodes :: list(),
+                next_value = 0 :: integer(),
+                acked :: list(),
+                wait :: integer(),
+                partitioned :: true | undefined,
+                values :: list()}).
 
 -ifdef(SINGLE_NODE).
--record(ensemble_info, {mod,
-                        args,
-                        leader,
-                        members,
-                        seq
+-record(ensemble_info, {mod :: module(),
+                        args :: [any()],
+                        leader :: leader_id(),
+                        members :: [peer_id()],
+                        seq :: {integer(), integer()}
                        }).
 -endif.
 
