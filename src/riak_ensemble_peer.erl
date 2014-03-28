@@ -27,7 +27,7 @@
 
 %% API
 -export([start_link/5, start/5]).
--export([join/2, join/3, update_members/3, get_leader/1]).
+-export([join/2, join/3, update_members/3, get_leader/1, backend_pong/1]).
 -export([sync_complete/1, sync_failed/1]).
 -export([kget/4, kupdate/6, kput_once/5, kover/5, kmodify/6, kdelete/4,
          ksafe_delete/5, obj_value/2, obj_value/3]).
@@ -94,11 +94,14 @@
                 modstate      :: any(),
                 workers       :: tuple(),
                 trust         :: boolean(),
+                alive         :: integer(),
                 last_views    :: [[peer_id()]],
                 self          :: pid()
                }).
 
 -type state() :: #state{}.
+
+-define(ALIVE, 1).
 
 %%%===================================================================
 %%% API
@@ -144,6 +147,9 @@ sync_complete(Pid) when is_pid(Pid) ->
 -spec sync_failed(pid()) -> ok.
 sync_failed(Pid) when is_pid(Pid) ->
     gen_fsm:send_event(Pid, sync_failed).
+
+backend_pong(Pid) when is_pid(Pid) ->
+    gen_fsm:send_event(Pid, backend_pong).
 
 force_state(Pid, EpochSeq) ->
     gen_fsm:sync_send_event(Pid, {force_state, EpochSeq}).
@@ -329,7 +335,12 @@ election(init, State) ->
                        election_timeout, State),
     {next_state, election, State2};
 election(election_timeout, State) ->
-    prepare(init, State#state{timer=undefined});
+    case mod_ping(State) of
+        {ok, State2} ->
+            prepare(init, State2#state{timer=undefined});
+        {failed, State2} ->
+            election(init, State2)
+    end;
 election({prepare, Id, NextEpoch, From}, State=#state{fact=Fact}) ->
     Epoch = epoch(State),
     case NextEpoch > Epoch of
@@ -458,31 +469,10 @@ prelead(Msg, From, State) ->
 -spec leading(_, state()) -> next_state().
 leading(init, State=#state{id=_Id}) ->
     ?OUT("~p: Leading~n", [_Id]),
-    leading(tick, State);
-leading(tick, State=#state{ensemble=Ensemble, id=Id}) ->
-    State2 = mod_tick(State),
-    State3 = maybe_update_ensembles(State2),
-    case should_transition(State3) of
-        true ->
-            Result=transition(State3);
-        false ->
-            NewFact = State3#state.fact,
-            Result = try_commit(NewFact, State3)
-    end,
-    case Result of
-        {ok, State4} ->
-            State5 = set_timer(?ENSEMBLE_TICK, tick, State4),
-            {next_state, leading, State5};
-        {failed, State4} ->
-            step_down(State4);
-        {shutdown, State4} ->
-            %% io:format("Shutting down...~n"),
-            spawn(fun() ->
-                          riak_ensemble_peer_sup:stop_peer(Ensemble, Id)
-                  end),
-            timer:sleep(1000),
-            step_down(stop, State4)
-    end;
+    _ = lager:info("~p: Leading~n", [_Id]),
+    leading(tick, State#state{alive=?ALIVE});
+leading(tick, State) ->
+    leader_tick(State);
 leading({forward, From, Msg}, State) ->
     case leading(Msg, From, State) of
         %% {reply, Reply, StateName, State2} ->
@@ -760,6 +750,9 @@ common(tick, State, StateName) ->
     {next_state, StateName, State};
 common({forward, _From, _Msg}, State, StateName) ->
     {next_state, StateName, State};
+common(backend_pong, State, StateName) ->
+    State2 = State#state{alive=?ALIVE},
+    {next_state, StateName, State2};
 common(Msg, State, StateName) ->
     ?OUT("~p: ~s/ignoring: ~p~n", [State#state.id, StateName, Msg]),
     %% io:format("~p/~p: ~s/ignoring: ~p~n", [State#state.id, self(), StateName, Msg]),
@@ -804,8 +797,49 @@ nack(_Msg, _State) ->
 %%% Ensemble Manager Integration
 %%%===================================================================
 
+-type m_tick() :: {ok|failed|changed|shutdown, state()}.
+-type m_tick_fun() :: fun((state()) -> m_tick()).
+
+leader_tick(State=#state{ensemble=Ensemble, id=Id}) ->
+    State2 = mod_tick(State),
+    M1 = {ok, State2},
+    M2 = continue(M1, fun maybe_ping/1),
+    M3 = continue(M2, fun maybe_update_ensembles/1),
+    M4 = continue(M3, fun maybe_transition/1),
+    case M4 of
+        {failed, State3} ->
+            step_down(State3);
+        {shutdown, State3} ->
+            %% io:format("Shutting down...~n"),
+            spawn(fun() ->
+                          riak_ensemble_peer_sup:stop_peer(Ensemble, Id)
+                  end),
+            timer:sleep(1000),
+            step_down(stop, State3);
+        {_, State3} ->
+            State4 = set_timer(?ENSEMBLE_TICK, tick, State3),
+            {next_state, leading, State4}
+    end.
+
+-spec continue(m_tick(), m_tick_fun()) -> m_tick().
+continue({ok, State}, Fun) ->
+    Fun(State);
+continue(M={_, _}, _Fun) ->
+    M.
+
+-spec maybe_ping(state()) -> {ok|failed, state()}.
+maybe_ping(State=#state{id=Id}) ->
+    Result = mod_ping(State),
+    case Result of
+        {ok, _State2} ->
+            Result;
+        {_, State2} ->
+            _ = lager:info("Ping failed. Stepping down: ~p", [Id]),
+            {failed, State2}
+    end.
+
 %% TODO: Move this somewhere else
--spec maybe_update_ensembles(state()) -> state().
+-spec maybe_update_ensembles(state()) -> {ok, state()}.
 maybe_update_ensembles(State=#state{ensemble=root, id=Id, members=Members, fact=Fact}) ->
     check_root_ensemble(Id, State),
     ViewSeq = Fact#fact.view_seq,
@@ -832,13 +866,30 @@ maybe_update_ensembles(State=#state{ensemble=root, id=Id, members=Members, fact=
                           end
                   end
           end),
-    State;
+    {ok, State};
 maybe_update_ensembles(State=#state{ensemble=Ensemble, id=Id, members=Members, fact=Fact}) ->
     %% TODO: This should view based not members
     ViewSeq = Fact#fact.view_seq,
     Info = #ensemble_info{leader=Id, members=Members, seq=ViewSeq},
     riak_ensemble_manager:update_ensemble(Ensemble, Info),
-    State.
+    {ok, State}.
+
+-spec maybe_transition(state()) -> {ok|failed|shutdown, state()}.
+maybe_transition(State=#state{fact=Fact}) ->
+    Result = case should_transition(State) of
+                 true ->
+                     transition(State);
+                 false ->
+                     try_commit(Fact, State)
+             end,
+    case Result of
+        {ok, _} ->
+            Result;
+        {failed, _} ->
+            Result;
+        {shutdown, _} ->
+            Result
+    end.
 
 check_root_ensemble(Leader, #state{ensemble=root, members=Members, fact=Fact}) ->
     ViewSeq = Fact#fact.view_seq,
@@ -1213,6 +1264,7 @@ init([Mod, Ensemble, Id, Views, Args]) ->
                    members=Members,
                    peers=[],
                    trust=false,
+                   alive=?ALIVE,
                    mod=Mod,
                    modstate=riak_ensemble_backend:start(Mod, Ensemble, Id, Args)},
     State2 = local_commit(State#state.fact, State),
@@ -1368,6 +1420,21 @@ peer(Id, #state{ensemble=Ensemble}) ->
 %%%===================================================================
 %%% Behaviour Interface
 %%%===================================================================
+
+mod_ping(State=#state{mod=Mod, modstate=ModState, alive=Alive}) ->
+    {Result, ModState2} = Mod:ping(self(), ModState),
+    {Reply, Alive2} = case Result of
+                          ok ->
+                              {ok, Alive};
+                          failed ->
+                              {failed, Alive};
+                          async when (Alive > 0) ->
+                              {ok, Alive - 1};
+                          async ->
+                              {failed, Alive}
+                      end,
+    State2 = State#state{modstate=ModState2, alive=Alive2},
+    {Reply, State2}.
 
 mod_tick(State=#state{mod=Mod, modstate=ModState, fact=Fact}) ->
     #fact{epoch=Epoch, seq=Seq, leader=Leader, views=Views} = Fact,

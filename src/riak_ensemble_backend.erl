@@ -32,6 +32,7 @@
          set_obj/4,
          latest_obj/3,
          reply/2,
+         pong/1,
          sync_complete/1,
          sync_failed/1]).
 
@@ -94,6 +95,10 @@
 %% by an elected leader. Can be used to implement custom housekeeping.
 -callback tick(epoch(), seq(), peer_id(), views(), state()) -> state().
 
+%% Callback used to ensure that the backend is still healthy. If `async'
+%% is returned, backend should eventually call {@link pong/1}.
+-callback ping(pid(), state()) -> {ok|async|failed, state()}.
+
 %%===================================================================
 
 start(Mod, Ensemble, Id, Args) ->
@@ -144,3 +149,7 @@ sync_complete(Pid) ->
 -spec sync_failed(pid()) -> ok.
 sync_failed(Pid) ->
     riak_ensemble_peer:sync_failed(Pid).
+
+-spec pong(pid()) -> ok.
+pong(From) ->
+    riak_ensemble_peer:backend_pong(From).
