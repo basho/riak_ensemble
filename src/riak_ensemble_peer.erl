@@ -81,6 +81,7 @@
 
 -type target() :: pid() | ensemble_id().
 -type maybe_peer_id() :: undefined | peer_id().
+-type modify_fun() :: fun() | {module(), atom(), term()}.
 
 -record(state, {id            :: peer_id(),
                 ensemble      :: ensemble_id(),
@@ -213,7 +214,7 @@ kover(Node, Target, Key, New, Timeout) ->
     ?OUT("kover(~p): ~p~n", [Key, Result]),
     Result.
 
--spec kmodify(node(), target(), key(), fun(), term(), timeout()) -> std_reply().
+-spec kmodify(node(), target(), key(), modify_fun(), term(), timeout()) -> std_reply().
 kmodify(Node, Target, Key, ModFun, Default, Timeout) ->
     F = fun ?MODULE:do_kmodify/4,
     Result = riak_ensemble_router:sync_send_event(Node, Target, {put, Key, F, [ModFun, Default]}, Timeout),
@@ -223,7 +224,12 @@ kmodify(Node, Target, Key, ModFun, Default, Timeout) ->
 do_kmodify(Obj, NextSeq, State, [ModFun, Default]) ->
     Value = get_value(Obj, Default, State),
     Vsn = {epoch(State), NextSeq},
-    New = ModFun(Vsn, Value),
+    New = case ModFun of
+              {Mod, Fun, Args} ->
+                  Mod:Fun(Vsn, Value, Args);
+              _ ->
+                  ModFun(Vsn, Value)
+          end,
     case New of
         failed ->
             failed;
