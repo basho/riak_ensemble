@@ -40,7 +40,7 @@
 -export([count_quorum/2, check_quorum/2, force_state/2]).
 
 %% Exported internal callback functions
--export([do_kupdate/3, do_kput_once/3, do_kmodify/3]).
+-export([do_kupdate/4, do_kput_once/4, do_kmodify/4]).
 
 -compile({pulse_replace_module,
           [{gen_fsm, pulse_gen_fsm}]}).
@@ -173,12 +173,12 @@ kget(Node, Target, Key, Timeout) ->
 
 -spec kupdate(node(), target(), key(), obj(), term(), timeout()) -> std_reply().
 kupdate(Node, Target, Key, Current, New, Timeout) ->
-    F = fun ?MODULE:do_kupdate/3,
+    F = fun ?MODULE:do_kupdate/4,
     Result = riak_ensemble_router:sync_send_event(Node, Target, {put, Key, F, [Current, New]}, Timeout),
     ?OUT("update(~p): ~p~n", [Key, Result]),
     Result.
 
-do_kupdate(Obj, State, [Current, New]) ->
+do_kupdate(Obj, _NextSeq, State, [Current, New]) ->
     Expected = {get_obj(epoch, Current, State), get_obj(seq, Current, State)},
     Epoch = get_obj(epoch, Obj, State),
     Seq = get_obj(seq, Obj, State),
@@ -193,12 +193,12 @@ do_kupdate(Obj, State, [Current, New]) ->
 
 -spec kput_once(node(), target(), key(), obj(), timeout()) -> std_reply().
 kput_once(Node, Target, Key, New, Timeout) ->
-    F = fun ?MODULE:do_kput_once/3,
+    F = fun ?MODULE:do_kput_once/4,
     Result = riak_ensemble_router:sync_send_event(Node, Target, {put, Key, F, [New]}, Timeout),
     ?OUT("put_once(~p): ~p~n", [Key, Result]),
     Result.
 
-do_kput_once(Obj, State, [New]) ->
+do_kput_once(Obj, _NextSeq, State, [New]) ->
     case get_obj(value, Obj, State) of
         notfound ->
             {ok, set_obj(value, New, Obj, State)};
@@ -215,13 +215,15 @@ kover(Node, Target, Key, New, Timeout) ->
 
 -spec kmodify(node(), target(), key(), fun(), term(), timeout()) -> std_reply().
 kmodify(Node, Target, Key, ModFun, Default, Timeout) ->
-    F = fun ?MODULE:do_kmodify/3,
+    F = fun ?MODULE:do_kmodify/4,
     Result = riak_ensemble_router:sync_send_event(Node, Target, {put, Key, F, [ModFun, Default]}, Timeout),
     ?OUT("kmodify(~p): ~p~n", [Key, Result]),
     Result.
 
-do_kmodify(Obj, State, [ModFun, Default]) ->
-    New = ModFun(get_value(Obj, Default, State)),
+do_kmodify(Obj, NextSeq, State, [ModFun, Default]) ->
+    Value = get_value(Obj, Default, State),
+    Vsn = {epoch(State), NextSeq},
+    New = ModFun(Vsn, Value),
     case New of
         failed ->
             failed;
@@ -1186,15 +1188,16 @@ update_key(Key, Local, State) ->
 %%                                                       {precondition,state()} |
 %%                                                       {ok,obj(),state()}.
 modify_key(Key, Current, Fun, Args, State) ->
+    Seq = obj_sequence(State),
     FunResult = case Args of
                     [] ->
-                        Fun(Current, State);
+                        Fun(Current, Seq, State);
                     _ ->
-                        Fun(Current, State, Args)
+                        Fun(Current, Seq, State, Args)
                 end,
     case FunResult of
         {ok, New} ->
-            case put_obj(Key, New, State) of
+            case put_obj(Key, New, Seq, State) of
                 {ok, Result, State2} ->
                     {ok, Result, State2};
                 {failed, State2} ->
@@ -1217,10 +1220,14 @@ get_latest_obj(Key, Local, State=#state{id=Id, members=Members}) ->
             {failed, State2}
     end.
 
+put_obj(Key, Obj, State) ->
+    Seq = obj_sequence(State),
+    put_obj(Key, Obj, Seq, State).
+
 -spec put_obj(_,obj(),state()) -> {ok, obj(), state()} | {failed,state()}.
-put_obj(Key, Obj, State=#state{id=Id, members=Members, self=Self}) ->
+put_obj(Key, Obj, Seq, State=#state{id=Id, members=Members, self=Self}) ->
     Epoch = epoch(State),
-    Obj2 = increment_obj(Key, Obj, State),
+    Obj2 = increment_obj(Key, Obj, Seq, State),
     Peers = get_peers(Members, State),
     {Future, State2} = blocking_send_all({put, Key, Obj2, Id, Epoch}, Peers, State),
     %% TODO: local can be failed here, what to do?
@@ -1232,10 +1239,9 @@ put_obj(Key, Obj, State=#state{id=Id, members=Members, self=Self}) ->
             {failed, State2}
     end.
 
--spec increment_obj(_,obj(),state()) -> any().
-increment_obj(Key, Obj, State=#state{ets=ETS}) ->
+-spec increment_obj(key(), obj(), seq(), state()) -> obj().
+increment_obj(Key, Obj, Seq, State) ->
     Epoch = epoch(State),
-    Seq = obj_sequence(ETS, Epoch),
     case Obj of
         notfound ->
             new_obj(Epoch, Seq, Key, notfound, State);
@@ -1244,7 +1250,12 @@ increment_obj(Key, Obj, State=#state{ets=ETS}) ->
                     set_obj(seq, Seq, Obj, State), State)
     end.
 
--spec obj_sequence(atom() | ets:tid(),_) -> integer().
+-spec obj_sequence(state()) -> seq().
+obj_sequence(State=#state{ets=ETS}) ->
+    Epoch = epoch(State),
+    obj_sequence(ETS, Epoch).
+
+-spec obj_sequence(atom() | ets:tid(), epoch()) -> seq().
 obj_sequence(ETS, Epoch) ->
     try
         Seq = ets:update_counter(ETS, seq, 0),

@@ -131,7 +131,7 @@ rmodify(Key, F, Default) ->
 -spec root_set_ensemble(ensemble_id(), ensemble_info()) -> std_reply().
 root_set_ensemble(EnsembleId, Info=#ensemble_info{leader=Leader, members=Members, seq=Seq}) ->
     rmodify(ensembles,
-            fun(Ensembles) ->
+            fun(_, Ensembles) ->
                     case orddict:find(EnsembleId, Ensembles) of
                         {ok, #ensemble_info{leader=CurLeader, members=CurMembers, seq=CurSeq}}
                           when (CurSeq > Seq) or ({CurLeader, CurMembers, CurSeq} =:= {Leader, Members, Seq}) ->
@@ -151,7 +151,7 @@ root_set_ensemble(EnsembleId, Info=#ensemble_info{leader=Leader, members=Members
 -spec root_set_ensemble_once(ensemble_id(), ensemble_info()) -> std_reply().
 root_set_ensemble_once(EnsembleId, Info) ->
     riak_ensemble_peer:kmodify(node(), root, ensembles,
-                               fun(Ensembles) ->
+                               fun(_, Ensembles) ->
                                        case orddict:is_key(EnsembleId, Ensembles) of
                                            true ->
                                                failed;
@@ -163,7 +163,7 @@ root_set_ensemble_once(EnsembleId, Info) ->
 -spec root_check_ensemble(ensemble_id(), ensemble_info()) -> std_reply().
 root_check_ensemble(EnsembleId, #ensemble_info{members=Peers, seq=Seq}) ->
     rmodify(ensembles,
-            fun(Ensembles) ->
+            fun(_, Ensembles) ->
                     %% io:format("########### ~p~n", [orddict:find(EnsembleId, Ensembles)]),
                     case orddict:find(EnsembleId, Ensembles) of
                         {ok, CurInfo=#ensemble_info{members=CurPeers, seq=CurSeq}}
@@ -192,7 +192,7 @@ check_ensemble(EnsembleId, Info) ->
 -spec join(node()) -> ok | error.
 join(OtherNode) ->
     Reply = riak_ensemble_peer:kmodify(node(), root, members,
-                                       fun(Members) ->
+                                       fun(_, Members) ->
                                                ordsets:add_element(OtherNode, Members)
                                        end, [], 10000),
     case Reply of

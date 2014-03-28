@@ -11,6 +11,7 @@
 -type peer_reply() :: {peer_id(), term()}.
 -type epoch() :: non_neg_integer().
 -type seq() :: non_neg_integer().
+-type vsn() :: {epoch(), seq()}.
 
 -record(ensemble_info, {mod     = riak_ensemble_basic_backend :: module(),
                         args    = []                          :: [any()],
