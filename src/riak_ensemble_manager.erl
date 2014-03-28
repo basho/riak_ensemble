@@ -26,6 +26,7 @@
 -export([start/0,
          start_link/0,
          get_peer_pid/2,
+         get_leader_pid/1,
          get_members/1,
          get_leader/1,
          rleader_pid/0,
@@ -101,6 +102,15 @@ register_peer(Ensemble, Id, Pid, ETS) ->
     true = ets:insert(?ETS, [{{pid, {Ensemble, Id}}, Pid},
                              {{ets, {Ensemble, Id}}, ETS}]),
     ok.
+
+-spec get_leader_pid(ensemble_id()) -> undefined | pid().
+get_leader_pid(Ensemble) ->
+    case get_leader(Ensemble) of
+        undefined ->
+            undefined;
+        Leader ->
+            get_peer_pid(Ensemble, Leader)
+    end.
 
 %%%===================================================================
 %%% Root-based API
