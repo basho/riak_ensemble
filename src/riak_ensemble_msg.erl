@@ -73,6 +73,8 @@ send_all(Msg, Id, Peers, Views) ->
 %%%===================================================================
 
 -spec maybe_send_request(peer_id(), {peer_id(), maybe_pid()}, reqid(), msg()) -> ok.
+-ifdef(TEST).
+
 maybe_send_request(Id, {PeerId, PeerPid}, ReqId, Event) ->
     case riak_ensemble_test:maybe_drop(Id, PeerId) of
         true ->
@@ -82,6 +84,15 @@ maybe_send_request(Id, {PeerId, PeerPid}, ReqId, Event) ->
         false ->
             send_request({PeerId, PeerPid}, ReqId, Event)
     end.
+
+-else.
+
+maybe_send_request(_Id, {PeerId, PeerPid}, ReqId, Event) ->
+    send_request({PeerId, PeerPid}, ReqId, Event).
+
+-endif.
+
+%%%===================================================================
 
 -spec send_request({peer_id(), maybe_pid()}, reqid(), msg()) -> ok.
 send_request({PeerId, PeerPid}, ReqId, Event) ->
