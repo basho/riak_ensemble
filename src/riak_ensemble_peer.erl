@@ -474,16 +474,14 @@ leading(tick, State=#state{ensemble=Ensemble, id=Id}) ->
             State5 = set_timer(?ENSEMBLE_TICK, tick, State4),
             {next_state, leading, State5};
         {failed, State4} ->
-            step_down(State4),
-            probe(init, set_leader(undefined, State4));
+            step_down(State4);
         {shutdown, State4} ->
             %% io:format("Shutting down...~n"),
-            step_down(State4),
             spawn(fun() ->
                           riak_ensemble_peer_sup:stop_peer(Ensemble, Id)
                   end),
             timer:sleep(1000),
-            {stop, normal, State4}
+            step_down(stop, State4)
     end;
 leading({forward, From, Msg}, State) ->
     case leading(Msg, From, State) of
@@ -511,8 +509,7 @@ leading({update_members, Changes}, _From, State=#state{fact=Fact,
                     unpause_workers(State),
                     {reply, ok, leading, State3};
                 {failed, State3} ->
-                    step_down(State3),
-                    probe(init, set_leader(undefined, State3))
+                    step_down(State3)
             end;
         {Errors, _NewView} ->
             {reply, {error, Errors}, leading, State}
@@ -523,8 +520,7 @@ leading(check_quorum, From, State) ->
             {reply, ok, leading, State2};
         {failed, State2} ->
             send_reply(From, timeout),
-            step_down(State),
-            probe(init, set_leader(undefined, State2))
+            step_down(State2)
     end;
 leading(Msg, From, State) ->
     case leading_kv(Msg, From, State) of
@@ -698,12 +694,22 @@ local_commit(Fact=#fact{leader=_Leader, epoch=Epoch, seq=Seq, views=Views},
     State2#state{ready=true,
                  members=compute_members(Views)}.
 
--spec step_down(state()) -> ok.
 step_down(State) ->
+    step_down(probe, State).
+
+step_down(Next, State) ->
     ?OUT("~p: stepping down~n", [State#state.id]),
-    _ = cancel_timer(State),
+    State2 = cancel_timer(State),
     reset_workers(State),
-    ok.
+    State3 = set_leader(undefined, State2),
+    case Next of
+        probe ->
+            probe(init, State3);
+        prepare ->
+            prepare(init, State3);
+        stop ->
+            {stop, normal, State3}
+    end.
 
 abandon(State) ->
     Abandoned = {epoch(State), seq(State)},
@@ -908,8 +914,7 @@ leading_kv({get, Key}, From, State) ->
     async(Key, State, fun() -> do_get_fsm(Key, From, Self, State) end),
     {next_state, leading, State};
 leading_kv(request_failed, _From, State) ->
-    step_down(State),
-    prepare(init, State);
+    step_down(prepare, State);
 leading_kv({local_get, Key}, From, State) ->
     State2 = do_local_get(From, Key, State),
     {next_state, leading, State2};
