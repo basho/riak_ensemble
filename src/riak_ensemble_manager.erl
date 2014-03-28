@@ -35,6 +35,7 @@
          update_ensemble/2,
          check_ensemble/2,
          update_ensembles/2,
+         register_peer/4,
          join/2,
          create_ensemble/4,
          create_ensemble/5,
@@ -45,6 +46,7 @@
          terminate/2, code_change/3]).
 
 -include_lib("riak_ensemble_types.hrl").
+-define(ETS, ?MODULE).
 
 -record(state, {version,
                 root :: [peer_id()],
@@ -92,6 +94,12 @@ update_root_ensemble(Node, RootInfo) ->
 -spec update_ensembles(node(), [{ensemble_id(), ensemble_info()}]) -> ok.
 update_ensembles(Node, Ensembles) ->
     typed_cast(Node, {update_ensembles, Ensembles}).
+
+-spec register_peer(ensemble_id(), peer_id(), pid(), ets:tid()) -> ok.
+register_peer(Ensemble, Id, Pid, ETS) ->
+    true = ets:insert(?ETS, [{{pid, {Ensemble, Id}}, Pid},
+                             {{ets, {Ensemble, Id}}, ETS}]),
+    ok.
 
 %%%===================================================================
 %%% Root-based API
@@ -214,7 +222,7 @@ create_ensemble(EnsembleId, EnsLeader, Members, Mod, Args) ->
 -spec get_peer_pid(ensemble_id(), peer_id()) -> pid() | undefined.
 get_peer_pid(Ensemble, PeerId) ->
     try
-        ets:lookup_element(em, {pid, {Ensemble, PeerId}}, 2)
+        ets:lookup_element(?ETS, {pid, {Ensemble, PeerId}}, 2)
     catch
         _:_ ->
             undefined
@@ -223,7 +231,7 @@ get_peer_pid(Ensemble, PeerId) ->
 -spec get_members(ensemble_id()) -> [peer_id()].
 get_members(EnsembleId) ->
     try
-        ets:lookup_element(em, EnsembleId, 3)
+        ets:lookup_element(?ETS, EnsembleId, 3)
     catch _:_ ->
             []
     end.
@@ -231,7 +239,7 @@ get_members(EnsembleId) ->
 -spec get_leader(ensemble_id()) -> leader_id().
 get_leader(EnsembleId) ->
     try
-        ets:lookup_element(em, EnsembleId, 2)
+        ets:lookup_element(?ETS, EnsembleId, 2)
     catch _:_ ->
             undefined
     end.
@@ -273,7 +281,7 @@ typed_cast(Node, Msg) when is_atom(Node) ->
 
 -spec init([]) -> {ok, state()}.
 init([]) ->
-    _ = ets:new(em, [named_table, public, {read_concurrency, true}, {write_concurrency, true}]),
+    _ = ets:new(?ETS, [named_table, public, {read_concurrency, true}, {write_concurrency, true}]),
     State = reload_state(),
     State2 = reload_peers(State),
     schedule_tick(),
@@ -292,7 +300,7 @@ handle_call(_Request, _From, State) ->
 
 handle_cast({peer_pid, Peer, Pid}, State=#state{remote_peers=Remote}) ->
     Remote2 = orddict:store(Peer, Pid, Remote),
-    ets:insert(em, {{pid, Peer}, Pid}),
+    ets:insert(?ETS, {{pid, Peer}, Pid}),
     erlang:monitor(process, Pid),
     %% io:format("Tracking remote peer: ~p :: ~p~n", [Peer, Pid]),
     {noreply, State#state{remote_peers=Remote2}};
@@ -350,7 +358,7 @@ do_update_ensembles(Ensembles, State) ->
     State3 = state_changed(State2),
     Insert = [{Ensemble, Leader, Members}
               || {Ensemble, #ensemble_info{leader=Leader, members=Members}} <- Ensembles],
-    ets:insert(em, Insert),
+    ets:insert(?ETS, Insert),
     ok = save_state(State3),
     State3.
 
@@ -368,7 +376,7 @@ handle_info({'DOWN', _, _, Pid, _}, State=#state{remote_peers=Remote}) ->
         _ ->
             case lists:keytake(Pid, 2, Remote) of
                 {value, {Peer, _Pid}, Remote2} ->
-                    ets:delete(em, {pid, Peer}),
+                    ets:delete(?ETS, {pid, Peer}),
                     %% io:format("Untracking remote peer: ~p :: ~p~n", [Peer, Pid]),
                     {noreply, State#state{remote_peers=Remote2}};
                 false ->
@@ -403,7 +411,7 @@ reload_state() ->
 reload_peers(State) ->
     Peers = orddict:from_list(riak_ensemble_peer_sup:peers()),
     Insert = [{{pid, Id}, Pid} || {Id, Pid} <- Peers],
-    ets:insert(em, Insert),
+    ets:insert(?ETS, Insert),
     State#state{peers=Peers}.
 
 -spec initial_state() -> state().
@@ -411,7 +419,7 @@ initial_state() ->
     RootLeader = {root, node()},
     Members = [RootLeader],
     Root = #ensemble_info{leader=RootLeader, members=Members, seq={0,0}},
-    ets:insert(em, {root, RootLeader, element(2, Root)}),
+    ets:insert(?ETS, {root, RootLeader, element(2, Root)}),
     State = #state{version=0,
                    root=Members,
                    root_leader=RootLeader,

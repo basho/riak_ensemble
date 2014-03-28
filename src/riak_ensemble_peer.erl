@@ -1143,8 +1143,7 @@ init([Mod, Ensemble, Id, Views, Args]) ->
     %% io:format("S: ~p~n", [State2]),
     gen_fsm:send_event(self(), init),
     %% io:format("I: ~p~n", [{{pid, {Ensemble, Id}}, self()}]),
-    ets:insert(em, [{{pid, {Ensemble, Id}}, self()},
-                    {{ets, {Ensemble, Id}}, ETS}]),
+    riak_ensemble_manager:register_peer(Ensemble, Id, self(), ETS),
     case lists:member(Id, Members) of
         true ->
             {ok, probe, State2};
