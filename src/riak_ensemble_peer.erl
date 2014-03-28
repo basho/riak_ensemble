@@ -28,11 +28,17 @@
 
 %% API
 -export([start_link/5, start/5]).
--export([join/2, join/3, get_leader/1]).
+-export([join/2, join/3, update_members/3, get_leader/1]).
 -export([sync_complete/1, sync_failed/1]).
--export([kget/4, kupdate/6, kput_once/5, kover/5, obj_value/3]).
+-export([kget/4, kupdate/6, kput_once/5, kover/5, kmodify/6, kdelete/4,
+         ksafe_delete/5, obj_value/2, obj_value/3]).
 -export([probe/2, election/2, prepare/2, leading/2, following/2,
          probe/3, election/3, prepare/3, leading/3, following/3]).
+-export([sync/2,
+         sync/3]).
+
+%% Support/debug API
+-export([check_quorum/2, force_state/2]).
 
 -compile({pulse_replace_module,
           [{gen_fsm, pulse_gen_fsm}]}).
@@ -72,6 +78,7 @@
 -type maybe_obj() :: obj() | notfound | timeout. %% TODO: Pretty sure this can also be failed
 
 -type target() :: pid() | ensemble_id().
+-type maybe_peer_id() :: undefined | peer_id().
 
 -record(state, {id            :: peer_id(),
                 ensemble      :: ensemble_id(),
@@ -136,6 +143,9 @@ sync_complete(Pid) when is_pid(Pid) ->
 -spec sync_failed(pid()) -> ok.
 sync_failed(Pid) when is_pid(Pid) ->
     gen_fsm:send_event(Pid, sync_failed).
+
+force_state(Pid, EpochSeq) ->
+    gen_fsm:sync_send_event(Pid, {force_state, EpochSeq}).
 
 %%%===================================================================
 %%% K/V API
@@ -304,6 +314,10 @@ sync(sync_failed, State) ->
     probe(init, State);
 sync(Msg, State) ->
     common(Msg, State, sync).
+
+-spec sync(_, fsm_from(), state()) -> {next_state, sync, state()}.
+sync(Msg, From, State) ->
+    common(Msg, From, State, sync).
 
 -spec election(_, state()) -> next_state().
 election(init, State) ->
@@ -649,10 +663,6 @@ set_epoch(Epoch, State=#state{fact=Fact}) ->
 set_seq(Seq, State=#state{fact=Fact}) ->
     State#state{fact=Fact#fact{seq=Seq}}.
 
--spec set_views(undefined | [[{_,atom()}]],state()) -> state().
-set_views(Views, State=#state{fact=Fact}) ->
-    State#state{fact=Fact#fact{views=Views}}.
-
 -spec leader(state()) -> undefined | {_,atom()}.
 leader(State) ->
     (State#state.fact)#fact.leader.
@@ -690,6 +700,10 @@ common(Msg, State, StateName) ->
     {next_state, StateName, State}.
 
 -spec common(_, fsm_from(), state(), StateName) -> {next_state, StateName, state()}.
+common({force_state, {Epoch, Seq}}, From, State, StateName) ->
+    State2 = set_epoch(Epoch, set_seq(Seq, State)),
+    gen_fsm:reply(From, ok),
+    {next_state, StateName, State2};
 common(_Msg, From, State, StateName) ->
     ?OUT("~p: ~s/ignoring: ~p~n", [State#state.id, StateName, _Msg]),
     send_reply(From, nack),
@@ -847,10 +861,6 @@ leading_kv({overwrite, Key, Val}, From, State) ->
     Self = self(),
     async(Key, State, fun() -> do_overwrite_fsm(Key, Val, From, Self, State) end),
     {next_state, leading, State};
-leading_kv({modify, Key, Current, Fun}, From, State) ->
-    Self = self(),
-    async(Key, State, fun() -> do_modify_fsm(Key, Current, Fun, From, State#state{self=Self}) end),
-    {next_state, leading, State};
 leading_kv(_, _From, _State) ->
     false.
 
@@ -894,8 +904,6 @@ following_kv({get, _Key}=Msg, From, State) ->
 following_kv({put, _Key, _Fun}=Msg, From, State) ->
     forward(Msg, From, State);
 following_kv({overwrite, _Key, _Val}=Msg, From, State) ->
-    forward(Msg, From, State);
-following_kv({modify, _Key, _Current, _Fun}=Msg, From, State) ->
     forward(Msg, From, State);
 following_kv(_, _From, _State) ->
     false.
@@ -1229,11 +1237,6 @@ quorum_timeout(State=#state{awaiting=Awaiting}) ->
 reply(From, Reply, #state{id=Id}) ->
     riak_ensemble_msg:reply(From, Id, Reply).
 
-reply2({To, Tag}, Reply, _) ->
-    catch To ! {Tag, Reply};
-reply2(From, Reply, #state{id=Id}) ->
-    riak_ensemble_msg:reply(From, Id, Reply).
-
 -spec handle_reply(any(), peer_id(), any(), state()) -> state().
 handle_reply(ReqId, Peer, Reply, State=#state{awaiting=Awaiting}) ->
     Awaiting2 = riak_ensemble_msg:handle_reply(ReqId, Peer, Reply, Awaiting),
@@ -1275,13 +1278,13 @@ existing_leader(_Replies, #fact{leader=Leader}) ->
 compute_members(Views) ->
     lists:usort(lists:append(Views)).
 
--spec get_peers([undefined | {_,atom()}],state()) -> [{undefined | {_,_},undefined | pid()}].
+-spec get_peers([maybe_peer_id()], state()) -> [{maybe_peer_id(), maybe_pid()}].
 get_peers(Members, State=#state{id=_Id}) ->
     %% [{Peer, peer(Peer, State)} || Peer <- Members,
     %%                               Peer =/= Id].
     [{Peer, peer(Peer, State)} || Peer <- Members].
 
--spec peer(undefined | {_,atom()},state()) -> undefined | pid().
+-spec peer(maybe_peer_id(), state()) -> maybe_pid().
 peer(Id, #state{id=Id}) ->
     self();
 peer(Id, #state{ensemble=Ensemble}) ->
@@ -1395,8 +1398,8 @@ save_fact(#state{ensemble=Ensemble, id=Id, fact=Fact}) ->
         ok = riak_ensemble_util:replace_file(File, [<<CRC:32/integer>>, Binary])
     catch
         _:Err ->
-            %% lager:error("Failed saving ensemble ~p state to ~p: ~p",
-            %%             [{Ensemble, Id}, File, Err]),
+            %% _ = lager:error("Failed saving ensemble ~p state to ~p: ~p",
+            %%                 [{Ensemble, Id}, File, Err]),
             {error, Err}
     end.
 
