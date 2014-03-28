@@ -37,7 +37,7 @@
          sync/3, prelead/3, prefollow/3]).
 
 %% Support/debug API
--export([check_quorum/2, force_state/2]).
+-export([count_quorum/2, check_quorum/2, force_state/2]).
 
 -compile({pulse_replace_module,
           [{gen_fsm, pulse_gen_fsm}]}).
@@ -135,6 +135,10 @@ update_members(Pid, Changes, Timeout) when is_pid(Pid) ->
 -spec check_quorum(pid(), timeout()) -> ok | timeout.
 check_quorum(Pid, Timeout) when is_pid(Pid) ->
     riak_ensemble_router:sync_send_event(node(), Pid, check_quorum, Timeout).
+
+-spec count_quorum(ensemble_id(), timeout()) -> integer() | timeout.
+count_quorum(Ensemble, Timeout) ->
+    riak_ensemble_router:sync_send_event(node(), Ensemble, count_quorum, Timeout).
 
 -spec get_leader(pid()) -> peer_id().
 get_leader(Pid) when is_pid(Pid) ->
@@ -512,6 +516,27 @@ leading(check_quorum, From, State) ->
             send_reply(From, timeout),
             step_down(State2)
     end;
+leading(count_quorum, From, State=#state{fact=Fact, id=Id, members=Members}) ->
+    NewFact = increment_sequence(Fact),
+    State2 = local_commit(NewFact, State),
+    {Future, State3} = blocking_send_all({commit, NewFact}, State2),
+    Extra = case lists:member(Id, Members) of
+                true  -> 1;
+                false -> 0
+            end,
+    spawn_link(fun() ->
+                       timer:sleep(1000),
+                       Count = case wait_for_quorum(Future) of
+                                   {quorum_met, Replies} ->
+                                       %% io:format("met: ~p~n", [Replies]),
+                                       length(Replies) + Extra;
+                                   {timeout, _Replies} ->
+                                       %% io:format("timeout~n"),
+                                       Extra
+                               end,
+                       gen_fsm:reply(From, Count)
+               end),
+    {next_state, leading, State3};
 leading(Msg, From, State) ->
     case leading_kv(Msg, From, State) of
         false ->

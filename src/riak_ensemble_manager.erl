@@ -39,7 +39,8 @@
          join/2,
          create_ensemble/4,
          create_ensemble/5,
-         check_quorum/2]).
+         check_quorum/2,
+         count_quorum/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -261,6 +262,15 @@ check_quorum(Ensemble, Timeout) ->
                             false
                     end
             end
+    end.
+
+-spec count_quorum(ensemble_id(), timeout()) -> integer().
+count_quorum(Ensemble, Timeout) ->
+    case riak_ensemble_peer:count_quorum(Ensemble, Timeout) of
+        timeout ->
+            0;
+        Count when is_integer(Count) ->
+            Count
     end.
 
 %%%===================================================================
