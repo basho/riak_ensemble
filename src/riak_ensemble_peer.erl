@@ -22,7 +22,6 @@
 
 -module(riak_ensemble_peer).
 -behaviour(gen_fsm).
--compile(export_all).
 
 -include_lib("riak_ensemble_types.hrl").
 
@@ -34,8 +33,8 @@
          ksafe_delete/5, obj_value/2, obj_value/3]).
 -export([probe/2, election/2, prepare/2, leading/2, following/2,
          probe/3, election/3, prepare/3, leading/3, following/3]).
--export([sync/2,
-         sync/3]).
+-export([sync/2, prelead/2, prefollow/2,
+         sync/3, prelead/3, prefollow/3]).
 
 %% Support/debug API
 -export([check_quorum/2, force_state/2]).
@@ -85,6 +84,8 @@
                 ets           :: ets:tid(),
                 fact          :: fact(),
                 awaiting      :: riak_ensemble_msg:msg_state(),
+                preliminary   :: {peer_id(), epoch()},
+                abandoned     :: {epoch(), seq()},
                 timer         :: timer(),
                 ready = false :: boolean(),
                 members       :: [peer_id()],
@@ -252,9 +253,9 @@ probe(init, State) ->
     State2 = set_leader(undefined, State),
     State3 = send_all(probe, State2),
     {next_state, probe, State3};
-probe({quorum_met, Replies}, State=#state{fact=Fact}) ->
+probe({quorum_met, Replies}, State=#state{fact=Fact, abandoned=Abandoned}) ->
     Latest = latest_fact(Replies, Fact),
-    Existing = existing_leader(Replies, Latest),
+    Existing = existing_leader(Replies, Abandoned, Latest),
     State2 = State#state{fact=Latest,
                          members=compute_members(Latest#fact.views)},
     %% io:format("Latest: ~p~n", [Latest]),
@@ -286,7 +287,8 @@ maybe_follow(Leader, State=#state{id=Leader}) ->
     election(init, set_leader(undefined, State));
 maybe_follow(Leader, State) ->
     %% io:format("~p: Following ~p~n", [State#state.id, Leader]),
-    following(init, set_leader(Leader, State)).
+    %% TODO: Should we use prefollow instead of following(not_ready)?
+    following(not_ready, set_leader(Leader, State)).
 
 sync(init, State) ->
     ?OUT("~p: sync~n", [State#state.id]),
@@ -323,7 +325,7 @@ sync(Msg, From, State) ->
 election(init, State) ->
     %% io:format("~p/~p: starting election~n", [self(), State#state.id]),
     ?OUT("~p: starting election~n", [State#state.id]),
-    State2 = set_timer(?ENSEMBLE_TICK + random:uniform(?ENSEMBLE_TICK),
+    State2 = set_timer(2*?ENSEMBLE_TICK + random:uniform(2*?ENSEMBLE_TICK),
                        election_timeout, State),
     {next_state, election, State2};
 election(election_timeout, State) ->
@@ -335,11 +337,8 @@ election({prepare, Id, NextEpoch, From}, State=#state{fact=Fact}) ->
             ?OUT("~p: accepting ~p from ~p (~p)~n",
                  [State#state.id, NextEpoch, Id, Epoch]),
             reply(From, Fact, State),
-            %% TODO: Perhaps a dedicated syncing state (ie. prepare but pre-commit) would be more clear
-            %% TODO: Related to above, added ready=false/true
-            State2 = set_leader(Id, set_epoch(NextEpoch, State)),
-            State3 = cancel_timer(State2),
-            following(init, State3);
+            State2 = cancel_timer(State),
+            prefollow({init, Id, NextEpoch}, State2);
         false ->
             ?OUT("~p: rejecting ~p from ~p (~p)~n",
                  [State#state.id, NextEpoch, Id, Epoch]),
@@ -367,6 +366,45 @@ election(Msg, State) ->
 election(Msg, From, State) ->
     common(Msg, From, State, election).
 
+prefollow({init, Id, NextEpoch}, State) ->
+    Prelim = {Id, NextEpoch},
+    State2 = State#state{preliminary=Prelim},
+    State3 = set_timer(?ENSEMBLE_TICK * 2, prefollow_timeout, State2),
+    {next_state, prefollow, State3};
+%% prefollow({commit, Fact, From}, State=#state{preliminary=Prelim}) ->
+%%     %% TODO: Shouldn't we check that this is from preliminary leader?
+%%     {_PreLeader, PreEpoch} = Prelim,
+%%     case Fact#fact.epoch >= PreEpoch of
+%%         true ->
+%%             State2 = cancel_timer(State),
+%%             State3 = local_commit(Fact, State2),
+%%             reply(From, ok, State),
+%%             following(init, State3);
+%%         false ->
+%%             {next_state, prefollow, State}
+%%     end;
+prefollow({new_epoch, Id, NextEpoch, From}, State=#state{preliminary=Prelim}) ->
+    case {Id, NextEpoch} == Prelim of
+        true ->
+            State2 = set_leader(Id, set_epoch(NextEpoch, State)),
+            State3 = cancel_timer(State2),
+            reply(From, ok, State),
+            following(not_ready, State3);
+        false ->
+            %% {next_state, prefollow, State}
+            State2 = cancel_timer(State),
+            probe(init, State2)
+    end;
+prefollow(prefollow_timeout, State) ->
+    %% TODO: Should this be election instead?
+    probe(init, State);
+%% TODO: Should we handle prepare messages?
+prefollow(Msg, State) ->
+    common(Msg, State, prefollow).
+
+prefollow(Msg, From, State) ->
+    common(Msg, From, State, prefollow).
+
 -spec prepare(_, state()) -> next_state().
 prepare(init, State=#state{id=Id}) ->
     %% TODO: Change this hack where we keep old state and reincrement
@@ -381,13 +419,10 @@ prepare({quorum_met, Replies}, State=#state{id=Id, fact=Fact}) ->
     %% TODO: Change this hack where we keep old state and reincrement
     Latest = latest_fact(Replies, Fact),
     {NextEpoch, _} = increment_epoch(State),
-    Latest2 = Latest#fact{leader=Id,
-                          epoch=NextEpoch,
-                          seq=0,
-                          view_seq={NextEpoch, 0}},
-    State3 = State#state{fact=Latest2,
-                         members=compute_members(Latest2#fact.views)},
-    leading(init, State3);
+    State3 = State#state{fact=Latest,
+                         preliminary={Id, NextEpoch},
+                         members=compute_members(Latest#fact.views)},
+    prelead(init, State3);
 prepare({timeout, _Replies}, State) ->
     %% TODO: Change this hack where we keep old state and reincrement
     %% io:format("PREPARE FAILED: ~p~n", [_Replies]),
@@ -399,6 +434,26 @@ prepare(Msg, State) ->
 -spec prepare(_, fsm_from(), state()) -> {next_state, prepare, state()}.
 prepare(Msg, From, State) ->
     common(Msg, From, State, prepare).
+
+prelead(init, State=#state{id=Id, preliminary=Prelim}) ->
+    {Id, NextEpoch} = Prelim,
+    State2 = send_all({new_epoch, Id, NextEpoch}, State),
+    {next_state, prelead, State2};
+prelead({quorum_met, _Replies}, State=#state{id=Id, preliminary=Prelim, fact=Fact}) ->
+    {Id, NextEpoch} = Prelim,
+    NewFact = Fact#fact{leader=Id,
+                        epoch=NextEpoch,
+                        seq=0,
+                        view_seq={NextEpoch, 0}},
+    State2 = State#state{fact=NewFact},
+    leading(init, State2);
+prelead({timeout, _Replies}, State) ->
+    probe(init, State);
+prelead(Msg, State) ->
+    common(Msg, State, prelead).
+
+prelead(Msg, From, State) ->
+    common(Msg, From, State, prelead).
 
 -spec leading(_, state()) -> next_state().
 leading(init, State=#state{id=_Id}) ->
@@ -546,11 +601,12 @@ reset_follower_timer(State) ->
     set_timer(?ENSEMBLE_TICK*2, follower_timeout, State).
 
 -spec following(_, state()) -> next_state().
+following(not_ready, State) ->
+    following(init, State#state{ready=false});
 following(init, State) ->
     ?OUT("~p: Following: ~p~n", [State#state.id, leader(State)]),
-    State2 = State#state{ready=false},
-    State3 = reset_follower_timer(State2),
-    {next_state, following, State3};
+    State2 = reset_follower_timer(State),
+    {next_state, following, State2};
 following({commit, Fact, From}, State) ->
     State3 = case Fact#fact.epoch >= epoch(State) of
                  true ->
@@ -561,25 +617,25 @@ following({commit, Fact, From}, State) ->
                      State
              end,
     {next_state, following, State3};
-following({prepare, Id, NextEpoch, From}=Msg, State=#state{fact=Fact}) ->
-    Epoch = epoch(State),
-    case (Id =:= leader(State)) and (NextEpoch > Epoch) of
-        true ->
-            ?OUT("~p: reaccepting ~p from ~p (~p)~n",
-                 [State#state.id, NextEpoch, Id, Epoch]),
-            reply(From, Fact, State),
-            State2 = set_epoch(NextEpoch, State),
-            State3 = reset_follower_timer(State2),
-            {next_state, following, State3};
-        false ->
-            ?OUT("~p: following/ignoring: ~p~n", [State#state.id, Msg]),
-            nack(Msg, State),
-            {next_state, following, State}
-    end;
+%% following({prepare, Id, NextEpoch, From}=Msg, State=#state{fact=Fact}) ->
+%%     Epoch = epoch(State),
+%%     case (Id =:= leader(State)) and (NextEpoch > Epoch) of
+%%         true ->
+%%             ?OUT("~p: reaccepting ~p from ~p (~p)~n",
+%%                  [State#state.id, NextEpoch, Id, Epoch]),
+%%             reply(From, Fact, State),
+%%             State2 = set_epoch(NextEpoch, State),
+%%             State3 = reset_follower_timer(State2),
+%%             {next_state, following, State3};
+%%         false ->
+%%             ?OUT("~p: following/ignoring: ~p~n", [State#state.id, Msg]),
+%%             nack(Msg, State),
+%%             {next_state, following, State}
+%%     end;
 following(follower_timeout, State) ->
     ?OUT("~p: follower_timeout from ~p~n", [State#state.id, leader(State)]),
     %% io:format("~p: follower_timeout from ~p~n", [State#state.id, leader(State)]),
-    probe(init, set_leader(undefined, State#state{timer=undefined}));
+    abandon(State#state{timer=undefined});
 following(Msg, State) ->
     case following_kv(Msg, State) of
         false ->
@@ -648,6 +704,11 @@ step_down(State) ->
     _ = cancel_timer(State),
     reset_workers(State),
     ok.
+
+abandon(State) ->
+    Abandoned = {epoch(State), seq(State)},
+    State2 = set_leader(undefined, State#state{abandoned=Abandoned}),
+    probe(init, State2).
 
 %%%===================================================================
 
@@ -726,6 +787,8 @@ nack({get, _, _, _, From}, State) ->
     reply(From, nack, State);
 nack({put, _, _, _, _, From}, State) ->
     ?OUT("~p: sending nack to ~p~n", [State#state.id, From]),
+    reply(From, nack, State);
+nack({new_epoch, _, _, From}, State) ->
     reply(From, nack, State);
 nack(_Msg, _State) ->
     ?OUT("~p: unable to nack unknown message: ~p~n", [_State#state.id, _Msg]),
@@ -1253,12 +1316,14 @@ latest_fact([{_,FactB}|L], FactA) ->
         false -> latest_fact(L, FactA)
     end.
 
-existing_leader(Replies, #fact{leader=undefined, views=Views}) ->
+existing_leader(Replies, Abandoned, #fact{leader=undefined, views=Views}) ->
     Members = compute_members(Views),
-    Counts = lists:foldl(fun({_, #fact{leader=Leader}}, Counts) ->
-                                 case lists:member(Leader, Members) of
+    Counts = lists:foldl(fun({_, #fact{epoch=Epoch, seq=Seq, leader=Leader}}, Counts) ->
+                                 Vsn = {Epoch, Seq},
+                                 Valid = (Abandoned =:= undefined) or (Vsn > Abandoned),
+                                 case Valid andalso lists:member(Leader, Members) of
                                      true ->
-                                         dict:update_counter(Leader, 1, Counts);
+                                         dict:update_counter({Epoch, Leader}, 1, Counts);
                                      false ->
                                          Counts
                                  end
@@ -1267,12 +1332,17 @@ existing_leader(Replies, #fact{leader=undefined, views=Views}) ->
     case Choices of
         [] ->
             undefined;
-        [{Leader, _Count}|_] ->
+        [{{_, Leader}, _Count}|_] ->
             %% io:format("----~n~p~n~p~n-----~n", [Replies, Leader]),
             Leader
     end;
-existing_leader(_Replies, #fact{leader=Leader}) ->
-    Leader.
+existing_leader(_Replies, Abandoned, #fact{epoch=Epoch, seq=Seq, leader=Leader}) ->
+    case {Epoch, Seq} > Abandoned of
+        true ->
+            Leader;
+        false ->
+            undefined
+    end.
 
 -spec compute_members([[any()]]) -> [any()].
 compute_members(Views) ->
