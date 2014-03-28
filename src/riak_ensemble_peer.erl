@@ -39,6 +39,9 @@
 %% Support/debug API
 -export([count_quorum/2, check_quorum/2, force_state/2]).
 
+%% Exported internal callback functions
+-export([do_kupdate/3, do_kput_once/3, do_kmodify/3]).
+
 -compile({pulse_replace_module,
           [{gen_fsm, pulse_gen_fsm}]}).
 
@@ -170,36 +173,38 @@ kget(Node, Target, Key, Timeout) ->
 
 -spec kupdate(node(), target(), key(), obj(), term(), timeout()) -> std_reply().
 kupdate(Node, Target, Key, Current, New, Timeout) ->
-    F = fun(Obj, State) ->
-                Expected = {get_obj(epoch, Current, State), get_obj(seq, Current, State)},
-                Epoch = get_obj(epoch, Obj, State),
-                Seq = get_obj(seq, Obj, State),
-                case {Epoch, Seq} of
-                    Expected ->
-                        {ok, set_obj(value, New, Obj, State)};
-                    _ ->
-                        %% io:format("Failed: ~p~nA: ~p~nB: ~p~n",
-                        %%           [Obj, Expected, {Epoch,Seq}]),
-                        failed
-                end
-        end,
-    Result = riak_ensemble_router:sync_send_event(Node, Target, {put, Key, F}, Timeout),
+    F = fun ?MODULE:do_kupdate/3,
+    Result = riak_ensemble_router:sync_send_event(Node, Target, {put, Key, F, [Current, New]}, Timeout),
     ?OUT("update(~p): ~p~n", [Key, Result]),
     Result.
 
+do_kupdate(Obj, State, [Current, New]) ->
+    Expected = {get_obj(epoch, Current, State), get_obj(seq, Current, State)},
+    Epoch = get_obj(epoch, Obj, State),
+    Seq = get_obj(seq, Obj, State),
+    case {Epoch, Seq} of
+        Expected ->
+            {ok, set_obj(value, New, Obj, State)};
+        _ ->
+            %% io:format("Failed: ~p~nA: ~p~nB: ~p~n",
+            %%           [Obj, Expected, {Epoch,Seq}]),
+            failed
+    end.
+
 -spec kput_once(node(), target(), key(), obj(), timeout()) -> std_reply().
 kput_once(Node, Target, Key, New, Timeout) ->
-    F = fun(Obj, State) ->
-                case get_obj(value, Obj, State) of
-                    notfound ->
-                        {ok, set_obj(value, New, Obj, State)};
-                    _ ->
-                        failed
-                end
-        end,
-    Result = riak_ensemble_router:sync_send_event(Node, Target, {put, Key, F}, Timeout),
+    F = fun ?MODULE:do_kput_once/3,
+    Result = riak_ensemble_router:sync_send_event(Node, Target, {put, Key, F, [New]}, Timeout),
     ?OUT("put_once(~p): ~p~n", [Key, Result]),
     Result.
+
+do_kput_once(Obj, State, [New]) ->
+    case get_obj(value, Obj, State) of
+        notfound ->
+            {ok, set_obj(value, New, Obj, State)};
+        _ ->
+            failed
+    end.
 
 -spec kover(node(), target(), key(), obj(), timeout()) -> std_reply().
 kover(Node, Target, Key, New, Timeout) ->
@@ -210,18 +215,19 @@ kover(Node, Target, Key, New, Timeout) ->
 
 -spec kmodify(node(), target(), key(), fun(), term(), timeout()) -> std_reply().
 kmodify(Node, Target, Key, ModFun, Default, Timeout) ->
-    F = fun(Obj, State) ->
-                New = ModFun(get_value(Obj, Default, State)),
-                case New of
-                    failed ->
-                        failed;
-                    _ ->
-                        {ok, set_obj(value, New, Obj, State)}
-                end
-        end,
-    Result = riak_ensemble_router:sync_send_event(Node, Target, {put, Key, F}, Timeout),
+    F = fun ?MODULE:do_kmodify/3,
+    Result = riak_ensemble_router:sync_send_event(Node, Target, {put, Key, F, [ModFun, Default]}, Timeout),
     ?OUT("kmodify(~p): ~p~n", [Key, Result]),
     Result.
+
+do_kmodify(Obj, State, [ModFun, Default]) ->
+    New = ModFun(get_value(Obj, Default, State)),
+    case New of
+        failed ->
+            failed;
+        _ ->
+            {ok, set_obj(value, New, Obj, State)}
+    end.
 
 -spec kdelete(node(), target(), key(), timeout()) -> std_reply().
 kdelete(Node, Target, Key, Timeout) ->
@@ -997,9 +1003,9 @@ leading_kv({local_get, Key}, From, State) ->
 leading_kv({local_put, Key, Obj}, From, State) ->
     State2 = do_local_put(From, Key, Obj, State),
     {next_state, leading, State2};
-leading_kv({put, Key, Fun}, From, State) ->
+leading_kv({put, Key, Fun, Args}, From, State) ->
     Self = self(),
-    async(Key, State, fun() -> do_put_fsm(Key, Fun, From, Self, State) end),
+    async(Key, State, fun() -> do_put_fsm(Key, Fun, Args, From, Self, State) end),
     {next_state, leading, State};
 leading_kv({overwrite, Key, Val}, From, State) ->
     Self = self(),
@@ -1045,7 +1051,7 @@ following_kv(_, _State) ->
 -spec following_kv(_,_,_) -> false | {next_state,following,state()}.
 following_kv({get, _Key}=Msg, From, State) ->
     forward(Msg, From, State);
-following_kv({put, _Key, _Fun}=Msg, From, State) ->
+following_kv({put, _Key, _Fun, _Args}=Msg, From, State) ->
     forward(Msg, From, State);
 following_kv({overwrite, _Key, _Val}=Msg, From, State) ->
     forward(Msg, From, State);
@@ -1064,7 +1070,7 @@ send_reply(From, Reply) ->
     gen_fsm:reply(From, Reply),
     ok.
 
-do_put_fsm(Key, Fun, From, Self, State) ->
+do_put_fsm(Key, Fun, Args, From, Self, State) ->
     %% TODO: Timeout should be configurable per request
     Local = local_get(Self, Key, 30000),
     State2 = State#state{self=Self},
@@ -1074,20 +1080,20 @@ do_put_fsm(Key, Fun, From, Self, State) ->
             %% gen_fsm:sync_send_event(Self, request_failed, infinity),
             send_reply(From, unavailable);
         true ->
-            do_modify_fsm(Key, Local, Fun, From, State2);
+            do_modify_fsm(Key, Local, Fun, Args, From, State2);
         false ->
             case update_key(Key, Local, State2) of
                 {ok, Current, _State3} ->
-                    do_modify_fsm(Key, Current, Fun, From, State2);
+                    do_modify_fsm(Key, Current, Fun, Args, From, State2);
                 {failed, _State3} ->
                     gen_fsm:sync_send_event(Self, request_failed, infinity),
                     send_reply(From, unavailable)
             end
     end.
 
--spec do_modify_fsm(_,_,fun((_,_) -> any()),{_,_},state()) -> ok.
-do_modify_fsm(Key, Current, Fun, From, State=#state{self=Self}) ->
-    case modify_key(Key, Current, Fun, State) of
+%% -spec do_modify_fsm(_,_,fun((_,_) -> any()),{_,_},state()) -> ok.
+do_modify_fsm(Key, Current, Fun, Args, From, State=#state{self=Self}) ->
+    case modify_key(Key, Current, Fun, Args, State) of
         {ok, New, _State2} ->
             send_reply(From, {ok, New});
         {precondition, _State2} ->
@@ -1176,11 +1182,17 @@ update_key(Key, Local, State) ->
             {failed, State2}
     end.
 
--spec modify_key(_,_,fun((_,_) -> any()), state()) -> {failed,state()} |
-                                                      {precondition,state()} |
-                                                      {ok,obj(),state()}.
-modify_key(Key, Current, Fun, State) ->
-    case Fun(Current, State) of
+%% -spec modify_key(_,_,fun((_,_) -> any()), state()) -> {failed,state()} |
+%%                                                       {precondition,state()} |
+%%                                                       {ok,obj(),state()}.
+modify_key(Key, Current, Fun, Args, State) ->
+    FunResult = case Args of
+                    [] ->
+                        Fun(Current, State);
+                    _ ->
+                        Fun(Current, State, Args)
+                end,
+    case FunResult of
         {ok, New} ->
             case put_obj(Key, New, State) of
                 {ok, Result, State2} ->
