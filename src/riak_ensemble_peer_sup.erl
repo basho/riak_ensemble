@@ -20,32 +20,39 @@
 -module(riak_ensemble_peer_sup).
 -behaviour(supervisor).
 -export([start_link/0, init/1]).
--export([start_peer/5, stop_peer/2, peers/0]).
+-export([start_peer/4, stop_peer/2, peers/0]).
+-export([get_peer_pid/2, register_peer/4]).
 
 -include_lib("riak_ensemble_types.hrl").
+-define(ETS, riak_ensemble_peers).
 
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
+    %% Owned by riak_ensemble_peer_sup to ensure table has lifetime that
+    %% is greater than or equal to all riak_ensemble_peers.
+    ?ETS = ets:new(?ETS, [named_table, public,
+                          {read_concurrency, true},
+                          {write_concurrency, true}]),
     {ok, {{one_for_one, 5, 10}, []}}.
 
--spec start_peer(module(), ensemble_id(), peer_id(), views(), [any()]) -> pid().
-start_peer(Mod, Ensemble, Id, Views, Args) ->
-    %% TODO: Are these really views?
-    Ref = peer_ref(Mod, Ensemble, Id, Views, Args),
+-spec start_peer(module(), ensemble_id(), peer_id(), [any()]) -> pid().
+start_peer(Mod, Ensemble, Id, Args) ->
+    Ref = peer_ref(Mod, Ensemble, Id, Args),
     Pid = case supervisor:start_child(?MODULE, Ref) of
               {ok, Child} -> Child;
               {error, {already_started, Child}} -> Child;
               {error, already_present} ->
                   ok = supervisor:delete_child(?MODULE, {Ensemble, Id}),
-                  start_peer(Mod, Ensemble, Id, Views, Args)
+                  start_peer(Mod, Ensemble, Id, Args)
           end,
     Pid.
 
 -spec stop_peer(ensemble_id(), peer_id()) -> ok.
 stop_peer(Ensemble, Id) ->
     _ = supervisor:terminate_child(?MODULE, {Ensemble, Id}),
+    ok = unregister_peer(Ensemble, Id),
     _ = supervisor:delete_child(?MODULE, {Ensemble, Id}),
     ok.
 
@@ -55,8 +62,29 @@ peers() ->
     [{Id,Pid} || {Id, Pid, worker, _} <- Children,
                  is_pid(Pid)].
 
+-spec get_peer_pid(ensemble_id(), peer_id()) -> pid() | undefined.
+get_peer_pid(Ensemble, Id) ->
+    try
+        ets:lookup_element(?ETS, {pid, {Ensemble, Id}}, 2)
+    catch
+        _:_ ->
+            undefined
+    end.
+
+-spec register_peer(ensemble_id(), peer_id(), pid(), ets:tid()) -> ok.
+register_peer(Ensemble, Id, Pid, ETS) ->
+    true = ets:insert(?ETS, [{{pid, {Ensemble, Id}}, Pid},
+                             {{ets, {Ensemble, Id}}, ETS}]),
+    ok.
+
 %% @private
-peer_ref(Mod, Ensemble, Id, Views, Args) ->
+unregister_peer(Ensemble, Id) ->
+    true = ets:delete(?ETS, {pid, {Ensemble, Id}}),
+    true = ets:delete(?ETS, {ets, {Ensemble, Id}}),
+    ok.
+
+%% @private
+peer_ref(Mod, Ensemble, Id, Args) ->
     {{Ensemble, Id},
-     {riak_ensemble_peer, start_link, [Mod, Ensemble, Id, Views, Args]},
+     {riak_ensemble_peer, start_link, [Mod, Ensemble, Id, Args]},
      permanent, 5000, worker, [riak_ensemble_peer]}.

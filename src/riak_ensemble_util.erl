@@ -23,6 +23,7 @@
          sha/1,
          md5/1,
          orddict_delta/2,
+         shuffle/1,
          cast_unreliable/2]).
 
 %%===================================================================
@@ -136,6 +137,16 @@ orddict_delta([], D2, Acc) ->
 orddict_delta(D1, [], Acc) ->
     L = [{K1,{V1,'$none'}} || {K1,V1} <- D1],
     L ++ Acc.
+
+-spec shuffle([T]) -> [T].
+shuffle([]) ->
+    [];
+shuffle(L=[_]) ->
+    L;
+shuffle(L) ->
+    Range = length(L),
+    L2 = [{random:uniform(Range), E} || E <- L],
+    [E || {_, E} <- lists:sort(L2)].
 
 %% Copied from riak_core_send_msg.erl
 cast_unreliable(Dest, Request) ->

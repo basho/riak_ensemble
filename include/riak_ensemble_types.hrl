@@ -9,14 +9,17 @@
 -type maybe_pid() :: pid() | undefined.
 -type peer_pids() :: [{peer_id(), maybe_pid()}].
 -type peer_reply() :: {peer_id(), term()}.
--type epoch() :: non_neg_integer().
--type seq() :: non_neg_integer().
+-type epoch() :: integer().
+-type seq() :: integer().
 -type vsn() :: {epoch(), seq()}.
+-type orddict(Key,Val) :: [{Key, Val}].
+-type ordsets(Val) :: [Val].
 
--record(ensemble_info, {mod     = riak_ensemble_basic_backend :: module(),
+-record(ensemble_info, {vsn,
+                        mod     = riak_ensemble_basic_backend :: module(),
                         args    = []                          :: [any()],
                         leader                                :: leader_id(),
-                        members                               :: [peer_id()],
+                        views                                 :: [[peer_id()]],
                         seq                                   :: {integer(), integer()}
                        }).
 -type ensemble_info() :: #ensemble_info{}.

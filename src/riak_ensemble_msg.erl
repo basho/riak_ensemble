@@ -156,7 +156,7 @@ maybe_timeout(Replies, undefined, Id, Views) ->
                     From ! {Ref, ok, Replies},
                     ok;
                 _ ->
-            collect_timeout(Replies, {From, Ref})
+                    collect_timeout(Replies, {From, Ref})
             end
     end;
 maybe_timeout(Replies, Parent, _Id, _Views) ->
