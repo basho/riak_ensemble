@@ -132,9 +132,9 @@ join(Pid, Id, Timeout) when is_pid(Pid) ->
 update_members(Pid, Changes, Timeout) when is_pid(Pid) ->
     riak_ensemble_router:sync_send_event(node(), Pid, {update_members, Changes}, Timeout).
 
--spec check_quorum(pid(), timeout()) -> ok | timeout.
-check_quorum(Pid, Timeout) when is_pid(Pid) ->
-    riak_ensemble_router:sync_send_event(node(), Pid, check_quorum, Timeout).
+-spec check_quorum(ensemble_id(), timeout()) -> ok | timeout.
+check_quorum(Ensemble, Timeout) ->
+    riak_ensemble_router:sync_send_event(node(), Ensemble, check_quorum, Timeout).
 
 -spec count_quorum(ensemble_id(), timeout()) -> integer() | timeout.
 count_quorum(Ensemble, Timeout) ->

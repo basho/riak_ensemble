@@ -247,21 +247,11 @@ get_leader(EnsembleId) ->
 
 -spec check_quorum(ensemble_id(), timeout()) -> boolean().
 check_quorum(Ensemble, Timeout) ->
-    case get_leader(Ensemble) of
-        undefined ->
-            false;
-        Leader ->
-            case get_peer_pid(Ensemble, Leader) of
-                undefined ->
-                    false;
-                Pid ->
-                    case riak_ensemble_peer:check_quorum(Pid, Timeout) of
-                        ok ->
-                            true;
-                        _ ->
-                            false
-                    end
-            end
+    case riak_ensemble_peer:check_quorum(Ensemble, Timeout) of
+        ok ->
+            true;
+        _ ->
+            false
     end.
 
 -spec count_quorum(ensemble_id(), timeout()) -> integer().
