@@ -1,2 +1,5 @@
 *.beam
 *.eqc
+.eunit/*
+ebin
+

@@ -50,7 +50,8 @@
 -type msg() :: term().
 -type peer_nack()  :: {peer_id(), nack}.
 -type msg_from()   :: {riak_ensemble_msg,pid(),reference()}.
--type maybe_from() :: undefined | {pid(),reference()}.
+-type from()       :: {pid(),reference()}.
+-type maybe_from() :: undefined | from().
 
 -type future() :: undefined | pid().
 -export_type([future/0, msg_from/0]).
@@ -73,6 +74,8 @@ send_all(Msg, Id, Peers, Views) ->
 %%%===================================================================
 
 -spec maybe_send_request(peer_id(), {peer_id(), maybe_pid()}, reqid(), msg()) -> ok.
+-ifdef(TEST).
+
 maybe_send_request(Id, {PeerId, PeerPid}, ReqId, Event) ->
     case riak_ensemble_test:maybe_drop(Id, PeerId) of
         true ->
@@ -82,6 +85,15 @@ maybe_send_request(Id, {PeerId, PeerPid}, ReqId, Event) ->
         false ->
             send_request({PeerId, PeerPid}, ReqId, Event)
     end.
+
+-else.
+
+maybe_send_request(_Id, {PeerId, PeerPid}, ReqId, Event) ->
+    send_request({PeerId, PeerPid}, ReqId, Event).
+
+-endif.
+
+%%%===================================================================
 
 -spec send_request({peer_id(), maybe_pid()}, reqid(), msg()) -> ok.
 send_request({PeerId, PeerPid}, ReqId, Event) ->
@@ -134,14 +146,23 @@ collect_replies(Replies, Parent, Id, Views, ReqId) ->
         {waiting, From, Ref} when is_pid(From), is_reference(Ref) ->
             check_enough(Replies, {From, Ref}, Id, Views, ReqId)
     after ?ENSEMBLE_TICK ->
-            collect_timeout(Replies, Parent)
+            maybe_timeout(Replies, Parent, Id, Views)
     end.
 
--spec collect_timeout([peer_reply()], maybe_from()) -> ok.
-collect_timeout(Replies, undefined) ->
+maybe_timeout(Replies, undefined, Id, Views) ->
     receive {waiting, From, Ref} ->
-            collect_timeout(Replies, {From, Ref})
+            case quorum_met(Replies, Id, Views) of
+                true ->
+                    From ! {Ref, ok, Replies},
+                    ok;
+                _ ->
+                    collect_timeout(Replies, {From, Ref})
+            end
     end;
+maybe_timeout(Replies, Parent, _Id, _Views) ->
+    collect_timeout(Replies, Parent).
+
+-spec collect_timeout([peer_reply()], from()) -> ok.
 collect_timeout(Replies, {From, Ref}) ->
     From ! {Ref, timeout, Replies},
     ok.

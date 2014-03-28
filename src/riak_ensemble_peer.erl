@@ -22,17 +22,25 @@
 
 -module(riak_ensemble_peer).
 -behaviour(gen_fsm).
--compile(export_all).
 
 -include_lib("riak_ensemble_types.hrl").
 
 %% API
--export([start_link/5, start/5]).
--export([join/2, join/3, get_leader/1]).
+-export([start_link/4, start/4]).
+-export([join/2, join/3, update_members/3, get_leader/1, backend_pong/1]).
 -export([sync_complete/1, sync_failed/1]).
--export([kget/4, kupdate/6, kput_once/5, kover/5, obj_value/3]).
+-export([kget/4, kupdate/6, kput_once/5, kover/5, kmodify/6, kdelete/4,
+         ksafe_delete/5, obj_value/2, obj_value/3]).
 -export([probe/2, election/2, prepare/2, leading/2, following/2,
          probe/3, election/3, prepare/3, leading/3, following/3]).
+-export([pending/2, sync/2, prelead/2, prefollow/2,
+         pending/3, sync/3, prelead/3, prefollow/3]).
+
+%% Support/debug API
+-export([count_quorum/2, check_quorum/2, force_state/2]).
+
+%% Exported internal callback functions
+-export([do_kupdate/4, do_kput_once/4, do_kmodify/4]).
 
 -compile({pulse_replace_module,
           [{gen_fsm, pulse_gen_fsm}]}).
@@ -48,10 +56,22 @@
 
 %%%===================================================================
 
--record(fact, {epoch    :: non_neg_integer(),
-               seq      :: non_neg_integer(),
+-record(fact, {epoch    :: epoch(),
+               seq      :: seq(),
                leader   :: peer_id(),
-               view_seq :: {non_neg_integer(), non_neg_integer()},
+
+               %% The epoch/seq which committed current view
+               view_vsn :: {epoch(), seq()},
+
+               %% The epoch/seq which committed current pending view
+               pend_vsn :: {epoch(), seq()},
+
+               %% The epoch/seq of last commited view change. In other words,
+               %% the pend_vsn for the last pending view that has since been
+               %% transitioned to (ie. no longer pending)
+               commit_vsn :: {epoch(), seq()},
+
+               pending  :: {vsn(), views()},
                views    :: [[peer_id()]]
               }).
 
@@ -72,12 +92,16 @@
 -type maybe_obj() :: obj() | notfound | timeout. %% TODO: Pretty sure this can also be failed
 
 -type target() :: pid() | ensemble_id().
+-type maybe_peer_id() :: undefined | peer_id().
+-type modify_fun() :: fun() | {module(), atom(), term()}.
 
 -record(state, {id            :: peer_id(),
                 ensemble      :: ensemble_id(),
                 ets           :: ets:tid(),
                 fact          :: fact(),
                 awaiting      :: riak_ensemble_msg:msg_state(),
+                preliminary   :: {peer_id(), epoch()},
+                abandoned     :: {epoch(), seq()},
                 timer         :: timer(),
                 ready = false :: boolean(),
                 members       :: [peer_id()],
@@ -86,25 +110,28 @@
                 modstate      :: any(),
                 workers       :: tuple(),
                 trust         :: boolean(),
+                alive         :: integer(),
                 last_views    :: [[peer_id()]],
                 self          :: pid()
                }).
 
 -type state() :: #state{}.
 
+-define(ALIVE, 1).
+
 %%%===================================================================
 %%% API
 %%%===================================================================
 
--spec start_link(module(), ensemble_id(), peer_id(), views(), [any()])
+-spec start_link(module(), ensemble_id(), peer_id(), [any()])
                 -> ignore | {error, _} | {ok, pid()}.
-start_link(Mod, Ensemble, Id, Views, Args) ->
-    gen_fsm:start_link(?MODULE, [Mod, Ensemble, Id, Views, Args], []).
+start_link(Mod, Ensemble, Id, Args) ->
+    gen_fsm:start_link(?MODULE, [Mod, Ensemble, Id, Args], []).
 
--spec start(module(), ensemble_id(), peer_id(), views(), [any()])
+-spec start(module(), ensemble_id(), peer_id(), [any()])
            -> ignore | {error, _} | {ok, pid()}.
-start(Mod, Ensemble, Id, Views, Args) ->
-    gen_fsm:start(?MODULE, [Mod, Ensemble, Id, Views, Args], []).
+start(Mod, Ensemble, Id, Args) ->
+    gen_fsm:start(?MODULE, [Mod, Ensemble, Id, Args], []).
 
 %% TODO: Do we want this to be routable by ensemble/id instead?
 -spec join(pid(), peer_id()) -> ok | timeout | {error, [{already_member, peer_id()}]}.
@@ -121,9 +148,13 @@ join(Pid, Id, Timeout) when is_pid(Pid) ->
 update_members(Pid, Changes, Timeout) when is_pid(Pid) ->
     riak_ensemble_router:sync_send_event(node(), Pid, {update_members, Changes}, Timeout).
 
--spec check_quorum(pid(), timeout()) -> ok | timeout.
-check_quorum(Pid, Timeout) when is_pid(Pid) ->
-    riak_ensemble_router:sync_send_event(node(), Pid, check_quorum, Timeout).
+-spec check_quorum(ensemble_id(), timeout()) -> ok | timeout.
+check_quorum(Ensemble, Timeout) ->
+    riak_ensemble_router:sync_send_event(node(), Ensemble, check_quorum, Timeout).
+
+-spec count_quorum(ensemble_id(), timeout()) -> integer() | timeout.
+count_quorum(Ensemble, Timeout) ->
+    riak_ensemble_router:sync_send_event(node(), Ensemble, count_quorum, Timeout).
 
 -spec get_leader(pid()) -> peer_id().
 get_leader(Pid) when is_pid(Pid) ->
@@ -137,6 +168,12 @@ sync_complete(Pid) when is_pid(Pid) ->
 sync_failed(Pid) when is_pid(Pid) ->
     gen_fsm:send_event(Pid, sync_failed).
 
+backend_pong(Pid) when is_pid(Pid) ->
+    gen_fsm:send_event(Pid, backend_pong).
+
+force_state(Pid, EpochSeq) ->
+    gen_fsm:sync_send_event(Pid, {force_state, EpochSeq}).
+
 %%%===================================================================
 %%% K/V API
 %%%===================================================================
@@ -149,36 +186,38 @@ kget(Node, Target, Key, Timeout) ->
 
 -spec kupdate(node(), target(), key(), obj(), term(), timeout()) -> std_reply().
 kupdate(Node, Target, Key, Current, New, Timeout) ->
-    F = fun(Obj, State) ->
-                Expected = {get_obj(epoch, Current, State), get_obj(seq, Current, State)},
-                Epoch = get_obj(epoch, Obj, State),
-                Seq = get_obj(seq, Obj, State),
-                case {Epoch, Seq} of
-                    Expected ->
-                        {ok, set_obj(value, New, Obj, State)};
-                    _ ->
-                        %% io:format("Failed: ~p~nA: ~p~nB: ~p~n",
-                        %%           [Obj, Expected, {Epoch,Seq}]),
-                        failed
-                end
-        end,
-    Result = riak_ensemble_router:sync_send_event(Node, Target, {put, Key, F}, Timeout),
+    F = fun ?MODULE:do_kupdate/4,
+    Result = riak_ensemble_router:sync_send_event(Node, Target, {put, Key, F, [Current, New]}, Timeout),
     ?OUT("update(~p): ~p~n", [Key, Result]),
     Result.
 
+do_kupdate(Obj, _NextSeq, State, [Current, New]) ->
+    Expected = {get_obj(epoch, Current, State), get_obj(seq, Current, State)},
+    Epoch = get_obj(epoch, Obj, State),
+    Seq = get_obj(seq, Obj, State),
+    case {Epoch, Seq} of
+        Expected ->
+            {ok, set_obj(value, New, Obj, State)};
+        _ ->
+            %% io:format("Failed: ~p~nA: ~p~nB: ~p~n",
+            %%           [Obj, Expected, {Epoch,Seq}]),
+            failed
+    end.
+
 -spec kput_once(node(), target(), key(), obj(), timeout()) -> std_reply().
 kput_once(Node, Target, Key, New, Timeout) ->
-    F = fun(Obj, State) ->
-                case get_obj(value, Obj, State) of
-                    notfound ->
-                        {ok, set_obj(value, New, Obj, State)};
-                    _ ->
-                        failed
-                end
-        end,
-    Result = riak_ensemble_router:sync_send_event(Node, Target, {put, Key, F}, Timeout),
+    F = fun ?MODULE:do_kput_once/4,
+    Result = riak_ensemble_router:sync_send_event(Node, Target, {put, Key, F, [New]}, Timeout),
     ?OUT("put_once(~p): ~p~n", [Key, Result]),
     Result.
+
+do_kput_once(Obj, _NextSeq, State, [New]) ->
+    case get_obj(value, Obj, State) of
+        notfound ->
+            {ok, set_obj(value, New, Obj, State)};
+        _ ->
+            failed
+    end.
 
 -spec kover(node(), target(), key(), obj(), timeout()) -> std_reply().
 kover(Node, Target, Key, New, Timeout) ->
@@ -187,20 +226,28 @@ kover(Node, Target, Key, New, Timeout) ->
     ?OUT("kover(~p): ~p~n", [Key, Result]),
     Result.
 
--spec kmodify(node(), target(), key(), fun(), term(), timeout()) -> std_reply().
+-spec kmodify(node(), target(), key(), modify_fun(), term(), timeout()) -> std_reply().
 kmodify(Node, Target, Key, ModFun, Default, Timeout) ->
-    F = fun(Obj, State) ->
-                New = ModFun(get_value(Obj, Default, State)),
-                case New of
-                    failed ->
-                        failed;
-                    _ ->
-                        {ok, set_obj(value, New, Obj, State)}
-                end
-        end,
-    Result = riak_ensemble_router:sync_send_event(Node, Target, {put, Key, F}, Timeout),
+    F = fun ?MODULE:do_kmodify/4,
+    Result = riak_ensemble_router:sync_send_event(Node, Target, {put, Key, F, [ModFun, Default]}, Timeout),
     ?OUT("kmodify(~p): ~p~n", [Key, Result]),
     Result.
+
+do_kmodify(Obj, NextSeq, State, [ModFun, Default]) ->
+    Value = get_value(Obj, Default, State),
+    Vsn = {epoch(State), NextSeq},
+    New = case ModFun of
+              {Mod, Fun, Args} ->
+                  Mod:Fun(Vsn, Value, Args);
+              _ ->
+                  ModFun(Vsn, Value)
+          end,
+    case New of
+        failed ->
+            failed;
+        _ ->
+            {ok, set_obj(value, New, Obj, State)}
+    end.
 
 -spec kdelete(node(), target(), key(), timeout()) -> std_reply().
 kdelete(Node, Target, Key, Timeout) ->
@@ -240,21 +287,25 @@ local_put(Pid, Key, Obj, Timeout) when is_pid(Pid) ->
 probe(init, State) ->
     ?OUT("~p: probe~n", [State#state.id]),
     State2 = set_leader(undefined, State),
-    State3 = send_all(probe, State2),
-    {next_state, probe, State3};
-probe({quorum_met, Replies}, State=#state{fact=Fact}) ->
+    case is_pending(State2) of
+        true ->
+            pending(init, State2);
+        false ->
+            State3 = send_all(probe, State2),
+            {next_state, probe, State3}
+    end;
+probe({quorum_met, Replies}, State=#state{fact=Fact, abandoned=Abandoned}) ->
     Latest = latest_fact(Replies, Fact),
-    Existing = existing_leader(Replies, Latest),
+    Existing = existing_leader(Replies, Abandoned, Latest),
     State2 = State#state{fact=Latest,
                          members=compute_members(Latest#fact.views)},
     %% io:format("Latest: ~p~n", [Latest]),
     maybe_follow(Existing, State2);
 probe({timeout, Replies}, State=#state{fact=Fact}) ->
     Latest = latest_fact(Replies, Fact),
-    State2 = State#state{fact=Latest,
-                         members=compute_members(Latest#fact.views)},
-    check_ensemble(State2),
-    probe(delay, State2);
+    State2 = State#state{fact=Latest},
+    State3 = check_views(State2),
+    probe(delay, State3);
 probe(delay, State) ->
     State2 = set_timer(1000, probe_continue, State),
     {next_state, probe, State2};
@@ -267,6 +318,42 @@ probe(Msg, State) ->
 probe(Msg, From, State) ->
     common(Msg, From, State, probe).
 
+pending(init, State) ->
+    State2 = set_timer(?ENSEMBLE_TICK * 10, pending_timeout, State),
+    {next_state, pending, State2};
+pending(pending_timeout, State) ->
+    probe({timeout, []}, State);
+pending({prepare, Id, NextEpoch, From}, State=#state{fact=Fact}) ->
+    Epoch = epoch(State),
+    case NextEpoch > Epoch of
+        true ->
+            ?OUT("~p: accepting ~p from ~p (~p)~n",
+                 [State#state.id, NextEpoch, Id, Epoch]),
+            reply(From, Fact, State),
+            State2 = cancel_timer(State),
+            prefollow({init, Id, NextEpoch}, State2);
+        false ->
+            ?OUT("~p: rejecting ~p from ~p (~p)~n",
+                 [State#state.id, NextEpoch, Id, Epoch]),
+            {next_state, pending, State}
+    end;
+pending({commit, NewFact, From}, State) ->
+    Epoch = epoch(State),
+    case NewFact#fact.epoch >= Epoch of
+        true ->
+            reply(From, ok, State),
+            State2 = local_commit(NewFact, State),
+            State3 = cancel_timer(State2),
+            following(init, State3);
+        false ->
+            {next_state, pending, State}
+    end;
+pending(Msg, State) ->
+    common(Msg, State, pending).
+
+pending(Msg, From, State) ->
+    common(Msg, From, State, pending).
+
 maybe_follow(_, State=#state{trust=false}) ->
     %% This peer is untrusted and must sync
     sync(init, State);
@@ -276,7 +363,8 @@ maybe_follow(Leader, State=#state{id=Leader}) ->
     election(init, set_leader(undefined, State));
 maybe_follow(Leader, State) ->
     %% io:format("~p: Following ~p~n", [State#state.id, Leader]),
-    following(init, set_leader(Leader, State)).
+    %% TODO: Should we use prefollow instead of following(not_ready)?
+    following(not_ready, set_leader(Leader, State)).
 
 sync(init, State) ->
     ?OUT("~p: sync~n", [State#state.id]),
@@ -305,15 +393,24 @@ sync(sync_failed, State) ->
 sync(Msg, State) ->
     common(Msg, State, sync).
 
+-spec sync(_, fsm_from(), state()) -> {next_state, sync, state()}.
+sync(Msg, From, State) ->
+    common(Msg, From, State, sync).
+
 -spec election(_, state()) -> next_state().
 election(init, State) ->
     %% io:format("~p/~p: starting election~n", [self(), State#state.id]),
     ?OUT("~p: starting election~n", [State#state.id]),
-    State2 = set_timer(?ENSEMBLE_TICK + random:uniform(?ENSEMBLE_TICK),
+    State2 = set_timer(2*?ENSEMBLE_TICK + random:uniform(2*?ENSEMBLE_TICK),
                        election_timeout, State),
     {next_state, election, State2};
 election(election_timeout, State) ->
-    prepare(init, State#state{timer=undefined});
+    case mod_ping(State) of
+        {ok, State2} ->
+            prepare(init, State2#state{timer=undefined});
+        {failed, State2} ->
+            election(init, State2)
+    end;
 election({prepare, Id, NextEpoch, From}, State=#state{fact=Fact}) ->
     Epoch = epoch(State),
     case NextEpoch > Epoch of
@@ -321,11 +418,8 @@ election({prepare, Id, NextEpoch, From}, State=#state{fact=Fact}) ->
             ?OUT("~p: accepting ~p from ~p (~p)~n",
                  [State#state.id, NextEpoch, Id, Epoch]),
             reply(From, Fact, State),
-            %% TODO: Perhaps a dedicated syncing state (ie. prepare but pre-commit) would be more clear
-            %% TODO: Related to above, added ready=false/true
-            State2 = set_leader(Id, set_epoch(NextEpoch, State)),
-            State3 = cancel_timer(State2),
-            following(init, State3);
+            State2 = cancel_timer(State),
+            prefollow({init, Id, NextEpoch}, State2);
         false ->
             ?OUT("~p: rejecting ~p from ~p (~p)~n",
                  [State#state.id, NextEpoch, Id, Epoch]),
@@ -353,6 +447,45 @@ election(Msg, State) ->
 election(Msg, From, State) ->
     common(Msg, From, State, election).
 
+prefollow({init, Id, NextEpoch}, State) ->
+    Prelim = {Id, NextEpoch},
+    State2 = State#state{preliminary=Prelim},
+    State3 = set_timer(?ENSEMBLE_TICK * 2, prefollow_timeout, State2),
+    {next_state, prefollow, State3};
+%% prefollow({commit, Fact, From}, State=#state{preliminary=Prelim}) ->
+%%     %% TODO: Shouldn't we check that this is from preliminary leader?
+%%     {_PreLeader, PreEpoch} = Prelim,
+%%     case Fact#fact.epoch >= PreEpoch of
+%%         true ->
+%%             State2 = cancel_timer(State),
+%%             State3 = local_commit(Fact, State2),
+%%             reply(From, ok, State),
+%%             following(init, State3);
+%%         false ->
+%%             {next_state, prefollow, State}
+%%     end;
+prefollow({new_epoch, Id, NextEpoch, From}, State=#state{preliminary=Prelim}) ->
+    case {Id, NextEpoch} == Prelim of
+        true ->
+            State2 = set_leader(Id, set_epoch(NextEpoch, State)),
+            State3 = cancel_timer(State2),
+            reply(From, ok, State),
+            following(not_ready, State3);
+        false ->
+            %% {next_state, prefollow, State}
+            State2 = cancel_timer(State),
+            probe(init, State2)
+    end;
+prefollow(prefollow_timeout, State) ->
+    %% TODO: Should this be election instead?
+    probe(init, State);
+%% TODO: Should we handle prepare messages?
+prefollow(Msg, State) ->
+    common(Msg, State, prefollow).
+
+prefollow(Msg, From, State) ->
+    common(Msg, From, State, prefollow).
+
 -spec prepare(_, state()) -> next_state().
 prepare(init, State=#state{id=Id}) ->
     %% TODO: Change this hack where we keep old state and reincrement
@@ -367,13 +500,10 @@ prepare({quorum_met, Replies}, State=#state{id=Id, fact=Fact}) ->
     %% TODO: Change this hack where we keep old state and reincrement
     Latest = latest_fact(Replies, Fact),
     {NextEpoch, _} = increment_epoch(State),
-    Latest2 = Latest#fact{leader=Id,
-                          epoch=NextEpoch,
-                          seq=0,
-                          view_seq={NextEpoch, 0}},
-    State3 = State#state{fact=Latest2,
-                         members=compute_members(Latest2#fact.views)},
-    leading(init, State3);
+    State3 = State#state{fact=Latest,
+                         preliminary={Id, NextEpoch},
+                         members=compute_members(Latest#fact.views)},
+    prelead(init, State3);
 prepare({timeout, _Replies}, State) ->
     %% TODO: Change this hack where we keep old state and reincrement
     %% io:format("PREPARE FAILED: ~p~n", [_Replies]),
@@ -386,36 +516,33 @@ prepare(Msg, State) ->
 prepare(Msg, From, State) ->
     common(Msg, From, State, prepare).
 
+prelead(init, State=#state{id=Id, preliminary=Prelim}) ->
+    {Id, NextEpoch} = Prelim,
+    State2 = send_all({new_epoch, Id, NextEpoch}, State),
+    {next_state, prelead, State2};
+prelead({quorum_met, _Replies}, State=#state{id=Id, preliminary=Prelim, fact=Fact}) ->
+    {Id, NextEpoch} = Prelim,
+    NewFact = Fact#fact{leader=Id,
+                        epoch=NextEpoch,
+                        seq=0,
+                        view_vsn={NextEpoch, 0}},
+    State2 = State#state{fact=NewFact},
+    leading(init, State2);
+prelead({timeout, _Replies}, State) ->
+    probe(init, State);
+prelead(Msg, State) ->
+    common(Msg, State, prelead).
+
+prelead(Msg, From, State) ->
+    common(Msg, From, State, prelead).
+
 -spec leading(_, state()) -> next_state().
 leading(init, State=#state{id=_Id}) ->
     ?OUT("~p: Leading~n", [_Id]),
-    leading(tick, State);
-leading(tick, State=#state{ensemble=Ensemble, id=Id}) ->
-    State2 = mod_tick(State),
-    State3 = maybe_update_ensembles(State2),
-    case should_transition(State3) of
-        true ->
-            Result=transition(State3);
-        false ->
-            NewFact = State3#state.fact,
-            Result = try_commit(NewFact, State3)
-    end,
-    case Result of
-        {ok, State4} ->
-            State5 = set_timer(?ENSEMBLE_TICK, tick, State4),
-            {next_state, leading, State5};
-        {failed, State4} ->
-            step_down(State4),
-            probe(init, set_leader(undefined, State4));
-        {shutdown, State4} ->
-            %% io:format("Shutting down...~n"),
-            step_down(State4),
-            spawn(fun() ->
-                          riak_ensemble_peer_sup:stop_peer(Ensemble, Id)
-                  end),
-            timer:sleep(1000),
-            {stop, normal, State4}
-    end;
+    _ = lager:info("~p: Leading~n", [_Id]),
+    leading(tick, State#state{alive=?ALIVE});
+leading(tick, State) ->
+    leader_tick(State);
 leading({forward, From, Msg}, State) ->
     case leading(Msg, From, State) of
         %% {reply, Reply, StateName, State2} ->
@@ -428,22 +555,20 @@ leading(Msg, State) ->
     common(Msg, State, leading).
 
 -spec leading(_, fsm_from(), state()) -> sync_next_state().
-leading({update_members, Changes}, _From, State=#state{fact=Fact,
-                                                       members=Members}) ->
+leading({update_members, Changes}, From, State=#state{fact=Fact,
+                                                      members=Members}) ->
+    Cluster = riak_ensemble_manager:cluster(),
     Views = Fact#fact.views,
-    case update_view(Changes, Members, hd(Views)) of
+    case update_view(Changes, Members, hd(Views), Cluster) of
         {[], NewView} ->
             Views2 = [NewView|Views],
-            ViewSeq = {Fact#fact.epoch, Fact#fact.seq},
-            NewFact = Fact#fact{views=Views2, view_seq=ViewSeq},
-            pause_workers(State),
+            NewFact = change_pending(Views2, State),
             case try_commit(NewFact, State) of
-                {ok, State3} ->
-                    unpause_workers(State),
-                    {reply, ok, leading, State3};
-                {failed, State3} ->
-                    step_down(State3),
-                    probe(init, set_leader(undefined, State3))
+                {ok, State2} ->
+                    {reply, ok, leading, State2};
+                {failed, State2} ->
+                    send_reply(From, timeout),
+                    step_down(State2)
             end;
         {Errors, _NewView} ->
             {reply, {error, Errors}, leading, State}
@@ -454,9 +579,29 @@ leading(check_quorum, From, State) ->
             {reply, ok, leading, State2};
         {failed, State2} ->
             send_reply(From, timeout),
-            step_down(State),
-            probe(init, set_leader(undefined, State2))
+            step_down(State2)
     end;
+leading(count_quorum, From, State=#state{fact=Fact, id=Id, members=Members}) ->
+    NewFact = increment_sequence(Fact),
+    State2 = local_commit(NewFact, State),
+    {Future, State3} = blocking_send_all({commit, NewFact}, State2),
+    Extra = case lists:member(Id, Members) of
+                true  -> 1;
+                false -> 0
+            end,
+    spawn_link(fun() ->
+                       timer:sleep(1000),
+                       Count = case wait_for_quorum(Future) of
+                                   {quorum_met, Replies} ->
+                                       %% io:format("met: ~p~n", [Replies]),
+                                       length(Replies) + Extra;
+                                   {timeout, _Replies} ->
+                                       %% io:format("timeout~n"),
+                                       Extra
+                               end,
+                       gen_fsm:reply(From, Count)
+               end),
+    {next_state, leading, State3};
 leading(Msg, From, State) ->
     case leading_kv(Msg, From, State) of
         false ->
@@ -465,26 +610,32 @@ leading(Msg, From, State) ->
             Return
     end.
 
--spec update_view([{add,_} | {del,_}],_,[any()]) -> {[any()],[any()]}.
-update_view(Changes, Members, View) ->
-    update_view(Changes, [], Members, View).
+-spec change_pending(views(), state()) -> fact().
+change_pending(Views, #state{fact=Fact}) ->
+    Vsn = {Fact#fact.epoch, Fact#fact.seq},
+    Fact#fact{pending={Vsn, Views}}.
 
--spec update_view([{add,_} | {del,_}],[any()],_,[any()]) -> {[any()],[any()]}.
-update_view([], Errors, _Members, View) ->
+update_view(Changes, Members, View, Cluster) ->
+    update_view(Changes, [], Members, View, Cluster).
+
+update_view([], Errors, _Members, View, _Cluster) ->
     {lists:reverse(Errors), lists:usort(View)};
-update_view([{add, Id}|Rest], Errors, Members, View) ->
-    case lists:member(Id, Members) of
-        true ->
-            update_view(Rest, [{already_member, Id}|Errors], Members, View);
-        false ->
-            update_view(Rest, Errors, [Id|Members], [Id|View])
+update_view([{add, Id}|Rest], Errors, Members, View, Cluster) ->
+    InCluster = in_cluster(Id, Cluster),
+    IsMember = lists:member(Id, Members),
+    if not InCluster ->
+            update_view(Rest, [{not_in_cluster, Id}|Errors], Members, View, Cluster);
+       IsMember ->
+            update_view(Rest, [{already_member, Id}|Errors], Members, View, Cluster);
+       true ->
+            update_view(Rest, Errors, [Id|Members], [Id|View], Cluster)
     end;
-update_view([{del, Id}|Rest], Errors, Members, View) ->
+update_view([{del, Id}|Rest], Errors, Members, View, Cluster) ->
     case lists:member(Id, Members) of
         false ->
-            update_view(Rest, [{not_member, Id}|Errors], Members, View);
+            update_view(Rest, [{not_member, Id}|Errors], Members, View, Cluster);
         true ->
-            update_view(Rest, Errors, Members -- [Id], View -- [Id])
+            update_view(Rest, Errors, Members -- [Id], View -- [Id], Cluster)
     end.
 
 -spec should_transition(state()) -> boolean().
@@ -497,17 +648,16 @@ should_transition(State=#state{last_views=LastViews}) ->
                              {failed, state()}.
 transition(State=#state{id=Id, fact=Fact}) ->
     Latest = hd(Fact#fact.views),
-    NewFact = Fact#fact{views=[Latest]},
+    ViewVsn = {Fact#fact.epoch, Fact#fact.seq},
+    PendVsn = Fact#fact.pend_vsn,
+    NewFact = Fact#fact{views=[Latest], view_vsn=ViewVsn, commit_vsn=PendVsn},
     case try_commit(NewFact, State) of
         {ok, State3} ->
             case lists:member(Id, Latest) of
                 false ->
                     {shutdown, State3};
                 true ->
-                    NewFact2 = State3#state.fact,
-                    ViewSeq = {NewFact2#fact.epoch, NewFact2#fact.seq},
-                    NewFact3 = NewFact2#fact{view_seq=ViewSeq},
-                    {ok, State3#state{fact=NewFact3}}
+                    {ok, State3}
             end;
         {failed, _}=Failed ->
             Failed
@@ -532,11 +682,12 @@ reset_follower_timer(State) ->
     set_timer(?ENSEMBLE_TICK*2, follower_timeout, State).
 
 -spec following(_, state()) -> next_state().
+following(not_ready, State) ->
+    following(init, State#state{ready=false});
 following(init, State) ->
     ?OUT("~p: Following: ~p~n", [State#state.id, leader(State)]),
-    State2 = State#state{ready=false},
-    State3 = reset_follower_timer(State2),
-    {next_state, following, State3};
+    State2 = reset_follower_timer(State),
+    {next_state, following, State2};
 following({commit, Fact, From}, State) ->
     State3 = case Fact#fact.epoch >= epoch(State) of
                  true ->
@@ -547,25 +698,25 @@ following({commit, Fact, From}, State) ->
                      State
              end,
     {next_state, following, State3};
-following({prepare, Id, NextEpoch, From}=Msg, State=#state{fact=Fact}) ->
-    Epoch = epoch(State),
-    case (Id =:= leader(State)) and (NextEpoch > Epoch) of
-        true ->
-            ?OUT("~p: reaccepting ~p from ~p (~p)~n",
-                 [State#state.id, NextEpoch, Id, Epoch]),
-            reply(From, Fact, State),
-            State2 = set_epoch(NextEpoch, State),
-            State3 = reset_follower_timer(State2),
-            {next_state, following, State3};
-        false ->
-            ?OUT("~p: following/ignoring: ~p~n", [State#state.id, Msg]),
-            nack(Msg, State),
-            {next_state, following, State}
-    end;
+%% following({prepare, Id, NextEpoch, From}=Msg, State=#state{fact=Fact}) ->
+%%     Epoch = epoch(State),
+%%     case (Id =:= leader(State)) and (NextEpoch > Epoch) of
+%%         true ->
+%%             ?OUT("~p: reaccepting ~p from ~p (~p)~n",
+%%                  [State#state.id, NextEpoch, Id, Epoch]),
+%%             reply(From, Fact, State),
+%%             State2 = set_epoch(NextEpoch, State),
+%%             State3 = reset_follower_timer(State2),
+%%             {next_state, following, State3};
+%%         false ->
+%%             ?OUT("~p: following/ignoring: ~p~n", [State#state.id, Msg]),
+%%             nack(Msg, State),
+%%             {next_state, following, State}
+%%     end;
 following(follower_timeout, State) ->
     ?OUT("~p: follower_timeout from ~p~n", [State#state.id, leader(State)]),
     %% io:format("~p: follower_timeout from ~p~n", [State#state.id, leader(State)]),
-    probe(init, set_leader(undefined, State#state{timer=undefined}));
+    abandon(State#state{timer=undefined});
 following(Msg, State) ->
     case following_kv(Msg, State) of
         false ->
@@ -597,7 +748,7 @@ valid_request(Peer, ReqEpoch, State=#state{ready=Ready}) ->
 -spec increment_epoch(fact() | state()) -> {pos_integer(), fact() | state()}.
 increment_epoch(Fact=#fact{epoch=Epoch}) ->
     NextEpoch = Epoch + 1,
-    Fact2 = Fact#fact{epoch=NextEpoch, seq=0, view_seq={NextEpoch, 0}},
+    Fact2 = Fact#fact{epoch=NextEpoch, seq=0},
     {NextEpoch, Fact2};
 increment_epoch(State=#state{fact=Fact}) ->
     {NextEpoch, Fact2} = increment_epoch(Fact),
@@ -628,12 +779,55 @@ local_commit(Fact=#fact{leader=_Leader, epoch=Epoch, seq=Seq, views=Views},
     State2#state{ready=true,
                  members=compute_members(Views)}.
 
--spec step_down(state()) -> ok.
 step_down(State) ->
+    step_down(probe, State).
+
+step_down(Next, State) ->
     ?OUT("~p: stepping down~n", [State#state.id]),
-    _ = cancel_timer(State),
+    State2 = cancel_timer(State),
     reset_workers(State),
-    ok.
+    State3 = set_leader(undefined, State2),
+    case Next of
+        probe ->
+            probe(init, State3);
+        prepare ->
+            prepare(init, State3);
+        stop ->
+            {stop, normal, State3}
+    end.
+
+abandon(State) ->
+    Abandoned = {epoch(State), seq(State)},
+    State2 = set_leader(undefined, State#state{abandoned=Abandoned}),
+    probe(init, State2).
+
+-spec is_pending(state()) -> boolean().
+is_pending(#state{ensemble=Ensemble, id=Id, members=Members}) ->
+    case riak_ensemble_manager:get_pending(Ensemble) of
+        {_, PendingViews} ->
+            Pending = compute_members(PendingViews),
+            (not lists:member(Id, Members)) andalso lists:member(Id, Pending);
+        _ ->
+            false
+    end.
+
+-spec in_cluster(peer_id(), [node()]) -> boolean().
+in_cluster({_, Node}, Cluster) ->
+    lists:member(Node, Cluster).
+
+-spec check_views(state()) -> state().
+check_views(State=#state{ensemble=Ensemble, fact=Fact}) ->
+    %% TODO: Should we really be checking views based on epoch/seq rather than view_vsn/etc?
+    Views = Fact#fact.views,
+    Vsn = {Fact#fact.epoch, Fact#fact.seq},
+    case riak_ensemble_manager:get_views(Ensemble) of
+        {CurVsn, CurViews} when (CurVsn > Vsn) or (Views == undefined) ->
+            NewFact = Fact#fact{views=CurViews},
+            State#state{members=compute_members(CurViews),
+                        fact=NewFact};
+        _ ->
+            State#state{members=compute_members(Views)}
+    end.
 
 %%%===================================================================
 
@@ -648,10 +842,6 @@ set_epoch(Epoch, State=#state{fact=Fact}) ->
 -spec set_seq(undefined | non_neg_integer(),state()) -> state().
 set_seq(Seq, State=#state{fact=Fact}) ->
     State#state{fact=Fact#fact{seq=Seq}}.
-
--spec set_views(undefined | [[{_,atom()}]],state()) -> state().
-set_views(Views, State=#state{fact=Fact}) ->
-    State#state{fact=Fact#fact{views=Views}}.
 
 -spec leader(state()) -> undefined | {_,atom()}.
 leader(State) ->
@@ -683,6 +873,9 @@ common(tick, State, StateName) ->
     {next_state, StateName, State};
 common({forward, _From, _Msg}, State, StateName) ->
     {next_state, StateName, State};
+common(backend_pong, State, StateName) ->
+    State2 = State#state{alive=?ALIVE},
+    {next_state, StateName, State2};
 common(Msg, State, StateName) ->
     ?OUT("~p: ~s/ignoring: ~p~n", [State#state.id, StateName, Msg]),
     %% io:format("~p/~p: ~s/ignoring: ~p~n", [State#state.id, self(), StateName, Msg]),
@@ -690,6 +883,10 @@ common(Msg, State, StateName) ->
     {next_state, StateName, State}.
 
 -spec common(_, fsm_from(), state(), StateName) -> {next_state, StateName, state()}.
+common({force_state, {Epoch, Seq}}, From, State, StateName) ->
+    State2 = set_epoch(Epoch, set_seq(Seq, State)),
+    gen_fsm:reply(From, ok),
+    {next_state, StateName, State2};
 common(_Msg, From, State, StateName) ->
     ?OUT("~p: ~s/ignoring: ~p~n", [State#state.id, StateName, _Msg]),
     send_reply(From, nack),
@@ -713,6 +910,8 @@ nack({get, _, _, _, From}, State) ->
 nack({put, _, _, _, _, From}, State) ->
     ?OUT("~p: sending nack to ~p~n", [State#state.id, From]),
     reply(From, nack, State);
+nack({new_epoch, _, _, From}, State) ->
+    reply(From, nack, State);
 nack(_Msg, _State) ->
     ?OUT("~p: unable to nack unknown message: ~p~n", [_State#state.id, _Msg]),
     ok.
@@ -721,58 +920,129 @@ nack(_Msg, _State) ->
 %%% Ensemble Manager Integration
 %%%===================================================================
 
-%% TODO: Move this somewhere else
--spec maybe_update_ensembles(state()) -> state().
-maybe_update_ensembles(State=#state{ensemble=root, id=Id, members=Members, fact=Fact}) ->
-    check_root_ensemble(Id, State),
-    ViewSeq = Fact#fact.view_seq,
-    Self = self(),
-    spawn(fun() ->
-                  case kget(node(), Self, members, 5000) of
-                      failed ->
-                          ok;
-                      timeout ->
-                          ok;
-                      {ok, ClusterObj} ->
-                          case kget(node(), Self, ensembles, 5000) of
-                              failed ->
-                                  ok;
-                              timeout ->
-                                  ok;
-                              {ok, EnsemblesObj} ->
-                                  Cluster = get_value(ClusterObj, [], State),
-                                  Ensembles = get_value(EnsemblesObj, [], State),
-                                  RootInfo = #ensemble_info{leader=Id, members=Members, seq=ViewSeq},
-                                  Ensembles2 = orddict:store(root, RootInfo, Ensembles),
-                                  _ = [riak_ensemble_manager:update_ensembles(Node, Ensembles2) || Node <- Cluster],
-                                  ok
-                          end
-                  end
-          end),
-    State;
-maybe_update_ensembles(State=#state{ensemble=Ensemble, id=Id, members=Members, fact=Fact}) ->
-    %% TODO: This should view based not members
-    ViewSeq = Fact#fact.view_seq,
-    Info = #ensemble_info{leader=Id, members=Members, seq=ViewSeq},
-    riak_ensemble_manager:update_ensemble(Ensemble, Info),
-    State.
+-type m_tick() :: {ok|failed|changed|shutdown, state()}.
+-type m_tick_fun() :: fun((state()) -> m_tick()).
 
-check_root_ensemble(Leader, #state{ensemble=root, members=Members, fact=Fact}) ->
-    ViewSeq = Fact#fact.view_seq,
-    RootInfo = #ensemble_info{leader=Leader, members=Members, seq=ViewSeq},
-    RootNodes = [Node || {_, Node} <- Members],
-    _ = [riak_ensemble_manager:update_root_ensemble(Node, RootInfo) || Node <- RootNodes],
-    ok.
+leader_tick(State=#state{ensemble=Ensemble, id=Id}) ->
+    State2 = mod_tick(State),
+    M1 = {ok, State2},
+    M2 = continue(M1, fun maybe_ping/1),
+    M3 = continue(M2, fun maybe_change_views/1),
+    M4 = continue(M3, fun maybe_clear_pending/1),
+    M5 = continue(M4, fun maybe_update_ensembles/1),
+    M6 = continue(M5, fun maybe_transition/1),
+    case M6 of
+        {failed, State3} ->
+            step_down(State3);
+        {shutdown, State3} ->
+            %% io:format("Shutting down...~n"),
+            spawn(fun() ->
+                          riak_ensemble_peer_sup:stop_peer(Ensemble, Id)
+                  end),
+            timer:sleep(1000),
+            step_down(stop, State3);
+        {_, State3} ->
+            State4 = set_timer(?ENSEMBLE_TICK, tick, State3),
+            {next_state, leading, State4}
+    end.
 
--spec check_ensemble(state()) -> ok.
-check_ensemble(State=#state{ensemble=root}) ->
-    check_root_ensemble(undefined, State);
-check_ensemble(#state{ensemble=Ensemble, id=Id, members=Members, fact=Fact}) ->
-    %% TODO: This should view based not members
-    ViewSeq = Fact#fact.view_seq,
-    Info = #ensemble_info{leader=Id, members=Members, seq=ViewSeq},
-    ok = riak_ensemble_manager:check_ensemble(Ensemble, Info),
-    ok.
+-spec continue(m_tick(), m_tick_fun()) -> m_tick().
+continue({ok, State}, Fun) ->
+    Fun(State);
+continue(M={_, _}, _Fun) ->
+    M.
+
+-spec maybe_ping(state()) -> {ok|failed, state()}.
+maybe_ping(State=#state{id=Id}) ->
+    Result = mod_ping(State),
+    case Result of
+        {ok, _State2} ->
+            Result;
+        {_, State2} ->
+            _ = lager:info("Ping failed. Stepping down: ~p", [Id]),
+            {failed, State2}
+    end.
+
+-spec maybe_change_views(state()) -> {ok|failed|changed, state()}.
+maybe_change_views(State=#state{ensemble=Ensemble, fact=Fact}) ->
+    PendVsn = Fact#fact.pend_vsn,
+    case riak_ensemble_manager:get_pending(Ensemble) of
+        {_, []} ->
+            {ok, State};
+        {Vsn, Views}
+          when (PendVsn =:= undefined) orelse (Vsn > PendVsn) ->
+            ViewVsn = {Fact#fact.epoch, Fact#fact.seq},
+            NewFact = Fact#fact{views=Views, pend_vsn=Vsn, view_vsn=ViewVsn},
+            pause_workers(State),
+            case try_commit(NewFact, State) of
+                {ok, State2} ->
+                    unpause_workers(State),
+                    {changed, State2};
+                {failed, State2} ->
+                    {failed, State2}
+            end;
+        _ ->
+            {ok, State}
+    end.
+
+-spec maybe_clear_pending(state()) -> {ok|failed|changed, state()}.
+maybe_clear_pending(State=#state{ensemble=Ensemble, fact=Fact}) ->
+    #fact{pending=Pending, pend_vsn=PendVsn,
+          commit_vsn=CommitVsn, views=Views} = Fact,
+    case Pending of
+        {_, []} ->
+            {ok, State};
+        {Vsn, _} when Vsn == PendVsn, Vsn == CommitVsn ->
+            case riak_ensemble_manager:get_views(Ensemble) of
+                {_, CurViews} when CurViews == Views ->
+                    NewFact = change_pending([], State),
+                    case try_commit(NewFact, State) of
+                        {ok, State2} ->
+                            {changed, State2};
+                        {failed, State2} ->
+                            {failed, State2}
+                    end;
+                _ ->
+                    {ok, State}
+            end;
+        _ ->
+            {ok, State}
+    end.
+
+-spec maybe_update_ensembles(state()) -> {ok, state()}.
+maybe_update_ensembles(State=#state{ensemble=Ensemble, id=Id, fact=Fact}) ->
+    Vsn = Fact#fact.view_vsn,
+    Views = Fact#fact.views,
+    case Ensemble of
+        root ->
+            riak_ensemble_root:gossip(Vsn, Id, Views);
+        _ ->
+            riak_ensemble_manager:update_ensemble(Ensemble, Id, Views, Vsn)
+    end,
+    case Fact#fact.pending of
+        {PendingVsn, PendingViews} ->
+            riak_ensemble_manager:gossip_pending(Ensemble, PendingVsn, PendingViews);
+        _ ->
+            ok
+    end,
+    {ok, State}.
+
+-spec maybe_transition(state()) -> {ok|failed|shutdown, state()}.
+maybe_transition(State=#state{fact=Fact}) ->
+    Result = case should_transition(State) of
+                 true ->
+                     transition(State);
+                 false ->
+                     try_commit(Fact, State)
+             end,
+    case Result of
+        {ok, _} ->
+            Result;
+        {failed, _} ->
+            Result;
+        {shutdown, _} ->
+            Result
+    end.
 
 %%%===================================================================
 %%% K/V Protocol
@@ -831,25 +1101,20 @@ leading_kv({get, Key}, From, State) ->
     async(Key, State, fun() -> do_get_fsm(Key, From, Self, State) end),
     {next_state, leading, State};
 leading_kv(request_failed, _From, State) ->
-    step_down(State),
-    prepare(init, State);
+    step_down(prepare, State);
 leading_kv({local_get, Key}, From, State) ->
     State2 = do_local_get(From, Key, State),
     {next_state, leading, State2};
 leading_kv({local_put, Key, Obj}, From, State) ->
     State2 = do_local_put(From, Key, Obj, State),
     {next_state, leading, State2};
-leading_kv({put, Key, Fun}, From, State) ->
+leading_kv({put, Key, Fun, Args}, From, State) ->
     Self = self(),
-    async(Key, State, fun() -> do_put_fsm(Key, Fun, From, Self, State) end),
+    async(Key, State, fun() -> do_put_fsm(Key, Fun, Args, From, Self, State) end),
     {next_state, leading, State};
 leading_kv({overwrite, Key, Val}, From, State) ->
     Self = self(),
     async(Key, State, fun() -> do_overwrite_fsm(Key, Val, From, Self, State) end),
-    {next_state, leading, State};
-leading_kv({modify, Key, Current, Fun}, From, State) ->
-    Self = self(),
-    async(Key, State, fun() -> do_modify_fsm(Key, Current, Fun, From, State#state{self=Self}) end),
     {next_state, leading, State};
 leading_kv(_, _From, _State) ->
     false.
@@ -891,11 +1156,9 @@ following_kv(_, _State) ->
 -spec following_kv(_,_,_) -> false | {next_state,following,state()}.
 following_kv({get, _Key}=Msg, From, State) ->
     forward(Msg, From, State);
-following_kv({put, _Key, _Fun}=Msg, From, State) ->
+following_kv({put, _Key, _Fun, _Args}=Msg, From, State) ->
     forward(Msg, From, State);
 following_kv({overwrite, _Key, _Val}=Msg, From, State) ->
-    forward(Msg, From, State);
-following_kv({modify, _Key, _Current, _Fun}=Msg, From, State) ->
     forward(Msg, From, State);
 following_kv(_, _From, _State) ->
     false.
@@ -912,7 +1175,7 @@ send_reply(From, Reply) ->
     gen_fsm:reply(From, Reply),
     ok.
 
-do_put_fsm(Key, Fun, From, Self, State) ->
+do_put_fsm(Key, Fun, Args, From, Self, State) ->
     %% TODO: Timeout should be configurable per request
     Local = local_get(Self, Key, 30000),
     State2 = State#state{self=Self},
@@ -922,20 +1185,20 @@ do_put_fsm(Key, Fun, From, Self, State) ->
             %% gen_fsm:sync_send_event(Self, request_failed, infinity),
             send_reply(From, unavailable);
         true ->
-            do_modify_fsm(Key, Local, Fun, From, State2);
+            do_modify_fsm(Key, Local, Fun, Args, From, State2);
         false ->
             case update_key(Key, Local, State2) of
                 {ok, Current, _State3} ->
-                    do_modify_fsm(Key, Current, Fun, From, State2);
+                    do_modify_fsm(Key, Current, Fun, Args, From, State2);
                 {failed, _State3} ->
                     gen_fsm:sync_send_event(Self, request_failed, infinity),
                     send_reply(From, unavailable)
             end
     end.
 
--spec do_modify_fsm(_,_,fun((_,_) -> any()),{_,_},state()) -> ok.
-do_modify_fsm(Key, Current, Fun, From, State=#state{self=Self}) ->
-    case modify_key(Key, Current, Fun, State) of
+%% -spec do_modify_fsm(_,_,fun((_,_) -> any()),{_,_},state()) -> ok.
+do_modify_fsm(Key, Current, Fun, Args, From, State=#state{self=Self}) ->
+    case modify_key(Key, Current, Fun, Args, State) of
         {ok, New, _State2} ->
             send_reply(From, {ok, New});
         {precondition, _State2} ->
@@ -1024,13 +1287,20 @@ update_key(Key, Local, State) ->
             {failed, State2}
     end.
 
--spec modify_key(_,_,fun((_,_) -> any()), state()) -> {failed,state()} |
-                                                      {precondition,state()} |
-                                                      {ok,obj(),state()}.
-modify_key(Key, Current, Fun, State) ->
-    case Fun(Current, State) of
+%% -spec modify_key(_,_,fun((_,_) -> any()), state()) -> {failed,state()} |
+%%                                                       {precondition,state()} |
+%%                                                       {ok,obj(),state()}.
+modify_key(Key, Current, Fun, Args, State) ->
+    Seq = obj_sequence(State),
+    FunResult = case Args of
+                    [] ->
+                        Fun(Current, Seq, State);
+                    _ ->
+                        Fun(Current, Seq, State, Args)
+                end,
+    case FunResult of
         {ok, New} ->
-            case put_obj(Key, New, State) of
+            case put_obj(Key, New, Seq, State) of
                 {ok, Result, State2} ->
                     {ok, Result, State2};
                 {failed, State2} ->
@@ -1053,10 +1323,14 @@ get_latest_obj(Key, Local, State=#state{id=Id, members=Members}) ->
             {failed, State2}
     end.
 
+put_obj(Key, Obj, State) ->
+    Seq = obj_sequence(State),
+    put_obj(Key, Obj, Seq, State).
+
 -spec put_obj(_,obj(),state()) -> {ok, obj(), state()} | {failed,state()}.
-put_obj(Key, Obj, State=#state{id=Id, members=Members, self=Self}) ->
+put_obj(Key, Obj, Seq, State=#state{id=Id, members=Members, self=Self}) ->
     Epoch = epoch(State),
-    Obj2 = increment_obj(Key, Obj, State),
+    Obj2 = increment_obj(Key, Obj, Seq, State),
     Peers = get_peers(Members, State),
     {Future, State2} = blocking_send_all({put, Key, Obj2, Id, Epoch}, Peers, State),
     %% TODO: local can be failed here, what to do?
@@ -1068,10 +1342,9 @@ put_obj(Key, Obj, State=#state{id=Id, members=Members, self=Self}) ->
             {failed, State2}
     end.
 
--spec increment_obj(_,obj(),state()) -> any().
-increment_obj(Key, Obj, State=#state{ets=ETS}) ->
+-spec increment_obj(key(), obj(), seq(), state()) -> obj().
+increment_obj(Key, Obj, Seq, State) ->
     Epoch = epoch(State),
-    Seq = obj_sequence(ETS, Epoch),
     case Obj of
         notfound ->
             new_obj(Epoch, Seq, Key, notfound, State);
@@ -1080,7 +1353,12 @@ increment_obj(Key, Obj, State=#state{ets=ETS}) ->
                     set_obj(seq, Seq, Obj, State), State)
     end.
 
--spec obj_sequence(atom() | ets:tid(),_) -> integer().
+-spec obj_sequence(state()) -> seq().
+obj_sequence(State=#state{ets=ETS}) ->
+    Epoch = epoch(State),
+    obj_sequence(ETS, Epoch).
+
+-spec obj_sequence(atom() | ets:tid(), epoch()) -> seq().
 obj_sequence(ETS, Epoch) ->
     try
         Seq = ets:update_counter(ETS, seq, 0),
@@ -1117,40 +1395,39 @@ get_value(Obj, Default, State) ->
 %%%===================================================================
 
 -spec init([any(),...]) -> {ok,election | probe,state()}.
-init([Mod, Ensemble, Id, Views, Args]) ->
+init([Mod, Ensemble, Id, Args]) ->
     NumWorkers = 1,
     ?OUT("~p: starting~n", [Id]),
-    Members = compute_members(Views),
     {A,B,C} = os:timestamp(),
     _ = random:seed(A + erlang:phash2(Id),
                     B + erlang:phash2(node()),
                     C),
     ETS = ets:new(x, [public, {read_concurrency, true}, {write_concurrency, true}]),
     Saved = reload_fact(Ensemble, Id),
-    Fact = Saved#fact{views=Views},
     Workers = start_workers(NumWorkers, ETS),
+    Members = compute_members(Saved#fact.views),
     State = #state{id=Id,
                    ensemble=Ensemble,
                    ets=ETS,
                    workers=list_to_tuple(Workers),
-                   fact=Fact,
+                   fact=Saved,
                    members=Members,
                    peers=[],
                    trust=false,
+                   alive=?ALIVE,
                    mod=Mod,
                    modstate=riak_ensemble_backend:start(Mod, Ensemble, Id, Args)},
-    State2 = local_commit(State#state.fact, State),
-    %% io:format("S: ~p~n", [State2]),
+    State2 = check_views(State),
+    %% TODO: Why are we local commiting on startup?
+    State3 = local_commit(State2#state.fact, State2),
     gen_fsm:send_event(self(), init),
-    %% io:format("I: ~p~n", [{{pid, {Ensemble, Id}}, self()}]),
-    ets:insert(em, [{{pid, {Ensemble, Id}}, self()},
-                    {{ets, {Ensemble, Id}}, ETS}]),
+    riak_ensemble_peer_sup:register_peer(Ensemble, Id, self(), ETS),
     case lists:member(Id, Members) of
         true ->
-            {ok, probe, State2};
+            {ok, probe, State3};
         false ->
             %% TODO: Is moving to election when not trusted safe?
-            {ok, election, State2}
+            {ok, election, State3}
     end.
 
 -spec handle_event(_, atom(), state()) -> {next_state, atom(), state()}.
@@ -1230,11 +1507,6 @@ quorum_timeout(State=#state{awaiting=Awaiting}) ->
 reply(From, Reply, #state{id=Id}) ->
     riak_ensemble_msg:reply(From, Id, Reply).
 
-reply2({To, Tag}, Reply, _) ->
-    catch To ! {Tag, Reply};
-reply2(From, Reply, #state{id=Id}) ->
-    riak_ensemble_msg:reply(From, Id, Reply).
-
 -spec handle_reply(any(), peer_id(), any(), state()) -> state().
 handle_reply(ReqId, Peer, Reply, State=#state{awaiting=Awaiting}) ->
     Awaiting2 = riak_ensemble_msg:handle_reply(ReqId, Peer, Reply, Awaiting),
@@ -1251,12 +1523,14 @@ latest_fact([{_,FactB}|L], FactA) ->
         false -> latest_fact(L, FactA)
     end.
 
-existing_leader(Replies, #fact{leader=undefined, views=Views}) ->
+existing_leader(Replies, Abandoned, #fact{leader=undefined, views=Views}) ->
     Members = compute_members(Views),
-    Counts = lists:foldl(fun({_, #fact{leader=Leader}}, Counts) ->
-                                 case lists:member(Leader, Members) of
+    Counts = lists:foldl(fun({_, #fact{epoch=Epoch, seq=Seq, leader=Leader}}, Counts) ->
+                                 Vsn = {Epoch, Seq},
+                                 Valid = (Abandoned =:= undefined) or (Vsn > Abandoned),
+                                 case Valid andalso lists:member(Leader, Members) of
                                      true ->
-                                         dict:update_counter(Leader, 1, Counts);
+                                         dict:update_counter({Epoch, Leader}, 1, Counts);
                                      false ->
                                          Counts
                                  end
@@ -1265,24 +1539,31 @@ existing_leader(Replies, #fact{leader=undefined, views=Views}) ->
     case Choices of
         [] ->
             undefined;
-        [{Leader, _Count}|_] ->
+        [{{_, Leader}, _Count}|_] ->
             %% io:format("----~n~p~n~p~n-----~n", [Replies, Leader]),
             Leader
     end;
-existing_leader(_Replies, #fact{leader=Leader}) ->
-    Leader.
+existing_leader(_Replies, Abandoned, #fact{epoch=Epoch, seq=Seq, leader=Leader}) ->
+    case {Epoch, Seq} > Abandoned of
+        true ->
+            Leader;
+        false ->
+            undefined
+    end.
 
 -spec compute_members([[any()]]) -> [any()].
+compute_members(undefined) ->
+    [];
 compute_members(Views) ->
     lists:usort(lists:append(Views)).
 
--spec get_peers([undefined | {_,atom()}],state()) -> [{undefined | {_,_},undefined | pid()}].
+-spec get_peers([maybe_peer_id()], state()) -> [{maybe_peer_id(), maybe_pid()}].
 get_peers(Members, State=#state{id=_Id}) ->
     %% [{Peer, peer(Peer, State)} || Peer <- Members,
     %%                               Peer =/= Id].
     [{Peer, peer(Peer, State)} || Peer <- Members].
 
--spec peer(undefined | {_,atom()},state()) -> undefined | pid().
+-spec peer(maybe_peer_id(), state()) -> maybe_pid().
 peer(Id, #state{id=Id}) ->
     self();
 peer(Id, #state{ensemble=Ensemble}) ->
@@ -1291,6 +1572,21 @@ peer(Id, #state{ensemble=Ensemble}) ->
 %%%===================================================================
 %%% Behaviour Interface
 %%%===================================================================
+
+mod_ping(State=#state{mod=Mod, modstate=ModState, alive=Alive}) ->
+    {Result, ModState2} = Mod:ping(self(), ModState),
+    {Reply, Alive2} = case Result of
+                          ok ->
+                              {ok, Alive};
+                          failed ->
+                              {failed, Alive};
+                          async when (Alive > 0) ->
+                              {ok, Alive - 1};
+                          async ->
+                              {failed, Alive}
+                      end,
+    State2 = State#state{modstate=ModState2, alive=Alive2},
+    {Reply, State2}.
 
 mod_tick(State=#state{mod=Mod, modstate=ModState, fact=Fact}) ->
     #fact{epoch=Epoch, seq=Seq, leader=Leader, views=Views} = Fact,
@@ -1339,7 +1635,7 @@ reload_fact(Ensemble, Id) ->
         not_found ->
             #fact{epoch=0,
                   seq=0,
-                  view_seq={0,0},
+                  view_vsn={0,0},
                   leader=undefined}
     end.
 
@@ -1396,8 +1692,8 @@ save_fact(#state{ensemble=Ensemble, id=Id, fact=Fact}) ->
         ok = riak_ensemble_util:replace_file(File, [<<CRC:32/integer>>, Binary])
     catch
         _:Err ->
-            %% lager:error("Failed saving ensemble ~p state to ~p: ~p",
-            %%             [{Ensemble, Id}, File, Err]),
+            %% _ = lager:error("Failed saving ensemble ~p state to ~p: ~p",
+            %%                 [{Ensemble, Id}, File, Err]),
             {error, Err}
     end.
 

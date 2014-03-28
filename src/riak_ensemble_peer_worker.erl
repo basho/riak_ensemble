@@ -42,7 +42,7 @@
 
 %%===================================================================
 
--spec start(ets:eid()) -> {ok, pid()}.
+-spec start(ets:tid()) -> {ok, pid()}.
 start(ETS) ->
     Parent = self(),
     Pid = spawn(fun() ->
