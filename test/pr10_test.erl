@@ -25,16 +25,10 @@ setup() ->
     cleanup(),
     make_data_dirs(),
     setup_this_node(),
-    {ok, Nodes} = launch_nodes(?NUM_NODES),
+    {ok, _Nodes} = launch_nodes(?NUM_NODES),
     %% allow nodes to start with a dirty, dirty sleep
     timer:sleep(1000),
-    io:format("NODES = ~p~n", [Nodes]),
-    [pong = net_adm:ping(Node) || Node <- node_names(?NUM_NODES)],
-    Output = start_riak_ensemble_on_all_nodes(),
-    io:format("~p~n", [Output]),
-    initial_join(Nodes),
-    RootEnsembleOutput = create_root_ensemble(Nodes),
-    ?assertEqual(ok, RootEnsembleOutput).
+    [pong = net_adm:ping(Node) || Node <- node_names(?NUM_NODES)].
 
 stop_nodes() ->
     teardown_nodes(?NUM_NODES).
@@ -44,9 +38,19 @@ cleanup() ->
     [os:cmd("rm -rf "++Dir) || Dir <- data_dirs()],
     ok.
 
+setup_prop() ->
+    Nodes = node_names(?NUM_NODES),
+    setup_this_node(),
+    cleanup_riak_ensemble_on_all_nodes(),
+    make_data_dirs(),
+    start_riak_ensemble_on_all_nodes(),
+    initial_join(Nodes),
+    ok = create_root_ensemble(Nodes).
+
 prop_normal() ->
-    ?FORALL(Cmds, commands(?MODULE), 
+    ?FORALL(Cmds, more_commands(10, commands(?MODULE)),
         begin
+            setup_prop(),
             {_H, _S, Res} = Result = run_commands(?MODULE, Cmds),
             aggregate(command_names(Cmds),
                 eqc_statem:pretty_commands(?MODULE, Cmds, Result, 
@@ -75,7 +79,7 @@ postcondition(_State, {call, _, kget, _}, {ok, {obj, _, _, _, notfound}}) ->
     true;
 postcondition(#state{data=Data}, {call, _, kget, [_, Ensemble, Key, _]}, 
     {ok, {obj, _, _, _, Val}}) ->
-        Val =:= dict:fetch({Ensemble, Key}, Data);
+    compare_val({Ensemble, Key}, Val, Data);
 postcondition(_, {call, _, kget, _}, _)->
     true;
 postcondition(_State, {call, ?MODULE, create_ensemble, [_Ensemble]}, _Res) ->
@@ -91,9 +95,8 @@ next_state(State=#state{ensembles=Ensembles}, Result,
                                  [Ensemble, Ensembles, Result]}};
 next_state(State=#state{data=Data}, 
     Result, {call, _, kput_once, [_, Ensemble, Key, Val, _]}) ->
-        State#state{data = {call, 
-                            ?MODULE, 
-                            maybe_put_data(Ensemble, Key, Val, Data, Result)}}.
+        State#state{data = {call, ?MODULE, maybe_put_data, 
+                             [Ensemble, Key, Val, Data, Result]}}.
 
 %% ==============================
 
@@ -104,6 +107,8 @@ maybe_add_ensemble(_, Ensembles, _) ->
 
 maybe_put_data(Ensemble, Key, Val, Data, {ok, _}) ->
     dict:store({Ensemble, Key}, Val, Data);
+maybe_put_data(Ensemble, Key, Val, Data, {error, timeout}) ->
+    partial_failure_write(Ensemble, Key, Val, Data);
 maybe_put_data(_, _, _, Data, _) ->
     Data.
 
@@ -111,10 +116,26 @@ create_ensemble(Ensemble) ->
     riak_ensemble_manager:create_ensemble(Ensemble, {Ensemble++"_peer", node()}, 
         members(Ensemble), riak_ensemble_basic_backend, []).
 
-query_no_such_ensemble() ->
-    Val = riak_ensemble_client:kget(no_such_ensemble, somekey, 1000),
-    %% TODO: Eventually this should return a no_such_ensemble error
-    ?assertEqual({error, timeout}, Val).
+compare_val(EnsembleKey, ActualVal, Data) ->
+    case dict:find(EnsembleKey, Data) of
+        error ->
+            false;
+        {ok, {possible, Vals}} ->
+            lists:member(ActualVal, Vals);
+        {ok, Val} ->
+            Val =:= ActualVal
+    end.
+
+partial_failure_write(Ensemble, Key, Val, Data) ->
+    K = {Ensemble, Key},
+    case dict:find(K, Data) of
+        error ->
+            dict:store(K, {possible, [undefined, Val]}, Data);
+        {ok, {possible, Vals}} ->
+            dict:store(K, {possible, [Val | Vals]}, Data);
+        {ok, Val2} ->
+            dict:store(K, {possible, [Val2, Val]}, Data)
+    end.
 
 %% ==============================
 %% Generators
@@ -147,11 +168,9 @@ members(Ensemble) ->
 
 initial_join(Nodes) ->
     Node1 = node(),
-    io:format("Enable ~p~n", [Node1]),
     ok = riak_ensemble_manager:enable(),
     [{root, Node1}] = riak_ensemble_manager:get_members(root),
     wait_quorum(root),
-    io:format("ensemble_join_nodes = ~p to ~p~n", [Nodes, Node1]),
     Output = [riak_ensemble_manager:join(Node1, Node) || Node <- Nodes],
     ?assertEqual([ok || _ <- lists:seq(2, ?NUM_NODES)], Output),
     wait_cluster().
@@ -163,30 +182,40 @@ create_root_ensemble(Nodes) ->
         riak_ensemble_peer:update_members(Leader, Changes, 10000).
 
 setup_this_node() ->
+    application:stop(riak_ensemble),
     os:cmd("rm -rf "++data_dir(1)),
-    {ok, _} = net_kernel:start(['dev1@127.0.0.1']),
+    net_kernel:start(['dev1@127.0.0.1']),
     erlang:set_cookie(node(), riak_ensemble_test),
     application:set_env(riak_ensemble, data_root, data_dir(1)),
     application:ensure_all_started(riak_ensemble).
 
 wait_quorum(Ensemble) ->
-    %% ?FMT("leader: ~p~n", [riak_ensemble_manager:get_leader(test)]),
     case riak_ensemble_manager:check_quorum(Ensemble, 1000) of
         true ->
             ok;
         false ->
-            %% erlang:yield(),
-            %% timer:sleep(1000),
             wait_quorum(Ensemble)
     end.
 
 wait_cluster() ->
-    case length(riak_ensemble_manager:cluster()) of 
-        ?NUM_NODES ->
-            ok;
-        _ ->
-            wait_cluster()
+    try
+        case length(riak_ensemble_manager:cluster()) of 
+            ?NUM_NODES ->
+                ok;
+            _ ->
+                wait_cluster()
+        end
+    catch _:_ ->
+        wait_cluster()
     end.
+
+cleanup_riak_ensemble_on_all_nodes() ->
+   [cleanup_riak_ensemble(Node, Path) ||
+       {Node, Path} <- lists:zip(node_names(?NUM_NODES), data_dirs())].
+
+cleanup_riak_ensemble(Node, Path) ->
+    rpc:call(Node, application, stop, [riak_ensemble]),
+    os:cmd("rm -rf "++Path).
 
 start_riak_ensemble_on_all_nodes() ->
     [start_riak_ensemble(Node, Path)||
@@ -198,6 +227,7 @@ start_riak_ensemble(Node, Path) ->
 
 data_dir(Num) ->
     "/tmp/dev" ++ integer_to_list(Num) ++ "_data".
+
 data_dirs() ->
     [data_dir(Num) ||
         Num <- lists:seq(2, ?NUM_NODES)].
