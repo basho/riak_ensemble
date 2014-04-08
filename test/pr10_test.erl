@@ -16,6 +16,7 @@
 -compile(export_all).
 
 -define(NUM_NODES, 5).
+-define(REQ_TIMEOUT, 1000).
 
 -record(state, {ensembles=sets:new() :: set(),
                 data=dict:new() :: dict()}).
@@ -27,7 +28,7 @@ setup() ->
     setup_this_node(),
     {ok, _Nodes} = launch_nodes(?NUM_NODES),
     %% allow nodes to start with a dirty, dirty sleep
-    timer:sleep(1000),
+    timer:sleep(?REQ_TIMEOUT),
     [pong = net_adm:ping(Node) || Node <- node_names(?NUM_NODES)].
 
 stop_nodes() ->
@@ -71,9 +72,11 @@ precondition(_State, _Call) ->
 command(_State=#state{ensembles=_Ensembles}) ->
     frequency([{1, {call, ?MODULE, create_ensemble, [ensemble()]}},
                {10, {call, riak_ensemble_client, kput_once, 
-                       [node(), ensemble(), key(), value(), 1000]}},
+                       [node(), ensemble(), key(), value(), ?REQ_TIMEOUT]}},
                {10, {call, riak_ensemble_client, kget, 
-                       [node(), ensemble(), key(), 1000]}}]).
+                       [node(), ensemble(), key(), ?REQ_TIMEOUT]}},
+               {10, {call, ?MODULE, kover, 
+                       [ensemble(), key(), value()]}}]).
 
 postcondition(_State, {call, _, kget, _}, {ok, {obj, _, _, _, notfound}}) ->
     true;
@@ -85,6 +88,8 @@ postcondition(_, {call, _, kget, _}, _)->
 postcondition(_State, {call, ?MODULE, create_ensemble, [_Ensemble]}, _Res) ->
     true;
 postcondition(_State, {call, _, kput_once, _}, _Res) ->
+    true;
+postcondition(_State, {call, _, kover, _}, _) ->
     true.
 
 next_state(State, _Result, {call, riak_ensemble_client, kget, _}) ->
@@ -95,6 +100,10 @@ next_state(State=#state{ensembles=Ensembles}, Result,
                                  [Ensemble, Ensembles, Result]}};
 next_state(State=#state{data=Data}, 
     Result, {call, _, kput_once, [_, Ensemble, Key, Val, _]}) ->
+        State#state{data = {call, ?MODULE, maybe_put_data, 
+                             [Ensemble, Key, Val, Data, Result]}};
+next_state(State=#state{data=Data}, 
+    Result, {call, _, kover, [Ensemble, Key, Val]}) ->
         State#state{data = {call, ?MODULE, maybe_put_data, 
                              [Ensemble, Key, Val, Data, Result]}}.
 
@@ -111,6 +120,9 @@ maybe_put_data(Ensemble, Key, Val, Data, {error, timeout}) ->
     partial_failure_write(Ensemble, Key, Val, Data);
 maybe_put_data(_, _, _, Data, _) ->
     Data.
+
+kover(Ensemble, Key, Val) ->
+    riak_ensemble_client:kover(node(), Ensemble, Key, Val, ?REQ_TIMEOUT).
 
 create_ensemble(Ensemble) ->
     riak_ensemble_manager:create_ensemble(Ensemble, {Ensemble++"_peer", node()}, 
@@ -190,7 +202,7 @@ setup_this_node() ->
     application:ensure_all_started(riak_ensemble).
 
 wait_quorum(Ensemble) ->
-    case riak_ensemble_manager:check_quorum(Ensemble, 1000) of
+    case riak_ensemble_manager:check_quorum(Ensemble, ?REQ_TIMEOUT) of
         true ->
             ok;
         false ->
