@@ -147,8 +147,8 @@ kupdate(Ensemble, Key, Val) ->
     case riak_ensemble_client:kget(node(), Ensemble, Key, ?REQ_TIMEOUT) of
         {ok, {obj, _, _, _, notfound}} ->
             {error, notfound};
-        {ok, {obj, _, _, _, Current}} ->
-            riak_ensemble_client:kupdate(node(), Ensemble, Key, Current, Val,
+        {ok, CurrentObj} ->
+            riak_ensemble_client:kupdate(node(), Ensemble, Key, CurrentObj, Val,
                 ?REQ_TIMEOUT);
         E ->
            E 
