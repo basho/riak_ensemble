@@ -49,7 +49,7 @@ setup_prop() ->
     ok = create_root_ensemble(Nodes).
 
 prop_normal() ->
-    ?FORALL(Cmds, more_commands(10, commands(?MODULE)),
+    ?FORALL(Cmds, more_commands(1000, commands(?MODULE)),
         begin
             setup_prop(),
             {_H, _S, Res} = Result = run_commands(?MODULE, Cmds),
@@ -147,8 +147,11 @@ kover(Ensemble, Key, Val) ->
     riak_ensemble_client:kover(node(), Ensemble, Key, Val, ?REQ_TIMEOUT).
 
 create_ensemble(Ensemble) ->
+    Res = 
     riak_ensemble_manager:create_ensemble(Ensemble, {Ensemble++"_peer", node()}, 
-        members(Ensemble), riak_ensemble_basic_backend, []).
+        members(Ensemble), riak_ensemble_basic_backend, []),
+    wait_quorum(Ensemble),
+    Res.
 
 compare_val(EnsembleKey, ActualVal, Data) ->
     case dict:find(EnsembleKey, Data) of
@@ -164,7 +167,7 @@ partial_failure_write(Ensemble, Key, Val, Data) ->
     K = {Ensemble, Key},
     case dict:find(K, Data) of
         error ->
-            dict:store(K, {possible, [undefined, Val]}, Data);
+            dict:store(K, {possible, [Val]}, Data);
         {ok, {possible, Vals}} ->
             dict:store(K, {possible, [Val | Vals]}, Data);
         {ok, Val2} ->
@@ -210,10 +213,10 @@ initial_join(Nodes) ->
     wait_cluster().
 
 create_root_ensemble(Nodes) ->
-        wait_quorum(root),
         Leader = riak_ensemble_manager:rleader_pid(),
         Changes = [{add, {root, Node}} || Node <- Nodes],
-        riak_ensemble_peer:update_members(Leader, Changes, 10000).
+        riak_ensemble_peer:update_members(Leader, Changes, 10000),
+        wait_quorum(root).
 
 setup_this_node() ->
     application:stop(riak_ensemble),
