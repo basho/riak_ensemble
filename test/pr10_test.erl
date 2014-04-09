@@ -99,12 +99,16 @@ postcondition(_State, {call, _, kupdate, [_Ensemble, _Key, NewVal]},
 postcondition(_State, {call, _, kover, _}, _) ->
     true.
 
-next_state(State, _Result, {call, riak_ensemble_client, kget, _}) ->
-    State;
 next_state(State=#state{ensembles=Ensembles}, Result, 
     {call, ?MODULE, create_ensemble, [Ensemble]}) ->
         State#state{ensembles = {call, ?MODULE, maybe_add_ensemble, 
                                  [Ensemble, Ensembles, Result]}};
+next_state(State=#state{data=Data}, Result, 
+    {call, riak_ensemble_client, kget, [_, Ensemble, Key, _]}) ->
+        %% In most protocols state doesn't change based on a read. But here, it
+        %% can wipe out a chain of partial failures by giving a reliable answer.
+        State#state{data = {call, ?MODULE, maybe_put_data,
+                [Ensemble, Key, Data, Result]}};
 next_state(State=#state{data=Data}, 
     Result, {call, _, kput_once, [_, Ensemble, Key, Val, _]}) ->
         State#state{data = {call, ?MODULE, maybe_put_data, 
@@ -124,6 +128,13 @@ maybe_add_ensemble(Ensemble, Ensembles, ok) ->
     sets:add_element(Ensemble, Ensembles);
 maybe_add_ensemble(_, Ensembles, _) ->
     Ensembles.
+
+%% maybe_put_data/4 is only done on reads, so we don't change our
+%% state on partial failure since we aren't adding an actually new value
+maybe_put_data(_Ensemble, _Key, Data, {error, _}) ->
+    Data;
+maybe_put_data(Ensemble, Key, Data, {ok, {obj, _, _, _, Val}}=Res) ->
+    maybe_put_data(Ensemble, Key, Val, Data, Res).
 
 maybe_put_data(Ensemble, Key, Val, Data, {ok, _}) ->
     dict:store({Ensemble, Key}, Val, Data);
