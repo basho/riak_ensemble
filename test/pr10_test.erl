@@ -69,26 +69,33 @@ initial_state() ->
 precondition(_State, _Call) ->
     true.
 
-command(_State=#state{ensembles=_Ensembles}) ->
+command(_State) ->
     frequency([{1, {call, ?MODULE, create_ensemble, [ensemble()]}},
                {10, {call, riak_ensemble_client, kput_once, 
                        [node(), ensemble(), key(), value(), ?REQ_TIMEOUT]}},
                {10, {call, riak_ensemble_client, kget, 
                        [node(), ensemble(), key(), ?REQ_TIMEOUT]}},
                {10, {call, ?MODULE, kover, 
+                       [ensemble(), key(), value()]}},
+               {10, {call, ?MODULE, kupdate,
                        [ensemble(), key(), value()]}}]).
 
 postcondition(_State, {call, _, kget, _}, {ok, {obj, _, _, _, notfound}}) ->
     true;
 postcondition(#state{data=Data}, {call, _, kget, [_, Ensemble, Key, _]}, 
     {ok, {obj, _, _, _, Val}}) ->
-    compare_val({Ensemble, Key}, Val, Data);
+        compare_val({Ensemble, Key}, Val, Data);
 postcondition(_, {call, _, kget, _}, _)->
     true;
 postcondition(_State, {call, ?MODULE, create_ensemble, [_Ensemble]}, _Res) ->
     true;
 postcondition(_State, {call, _, kput_once, _}, _Res) ->
     true;
+postcondition(_State, {call, _, kupdate, _}, {error, _}) ->
+    true;
+postcondition(_State, {call, _, kupdate, [_Ensemble, _Key, NewVal]},
+    {ok, {obj, _, _, _, Val}}) ->
+       NewVal =:= Val; 
 postcondition(_State, {call, _, kover, _}, _) ->
     true.
 
@@ -105,7 +112,11 @@ next_state(State=#state{data=Data},
 next_state(State=#state{data=Data}, 
     Result, {call, _, kover, [Ensemble, Key, Val]}) ->
         State#state{data = {call, ?MODULE, maybe_put_data, 
-                             [Ensemble, Key, Val, Data, Result]}}.
+                [Ensemble, Key, Val, Data, Result]}};
+next_state(State=#state{data=Data}, Result, 
+    {call, _, kupdate, [Ensemble, Key, Val]}) ->
+        State#state{data = {call, ?MODULE, maybe_put_data,
+                [Ensemble, Key, Val, Data, Result]}}.
 
 %% ==============================
 
@@ -120,6 +131,17 @@ maybe_put_data(Ensemble, Key, Val, Data, {error, timeout}) ->
     partial_failure_write(Ensemble, Key, Val, Data);
 maybe_put_data(_, _, _, Data, _) ->
     Data.
+
+kupdate(Ensemble, Key, Val) ->
+    case riak_ensemble_client:kget(node(), Ensemble, Key, ?REQ_TIMEOUT) of
+        {ok, {obj, _, _, _, notfound}} ->
+            {error, notfound};
+        {ok, {obj, _, _, _, Current}} ->
+            riak_ensemble_client:kupdate(node(), Ensemble, Key, Current, Val,
+                ?REQ_TIMEOUT);
+        E ->
+           E 
+    end.
 
 kover(Ensemble, Key, Val) ->
     riak_ensemble_client:kover(node(), Ensemble, Key, Val, ?REQ_TIMEOUT).
