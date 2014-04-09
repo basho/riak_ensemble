@@ -22,7 +22,7 @@
 -include_lib("riak_ensemble_types.hrl").
 
 %% API
--export([update_ensemble/4, set_ensemble/2, join/1, gossip/3]).
+-export([update_ensemble/4, set_ensemble/2, join/1, gossip/4]).
 
 %% Exported internal callback functions
 -export([do_root_call/3, do_root_cast/3]).
@@ -54,9 +54,9 @@ join(Node) ->
             {error, Error}
     end.
 
--spec gossip(vsn(), peer_id(), views()) -> ok.
-gossip(Vsn, Leader, Views) ->
-    ok = cast({gossip, Vsn, Leader, Views}).
+-spec gossip(pid(), vsn(), peer_id(), views()) -> ok.
+gossip(Pid, Vsn, Leader, Views) when is_pid(Pid) ->
+    ok = cast(node(), Pid, {gossip, Vsn, Leader, Views}).
 
 %%%===================================================================
 
@@ -82,10 +82,13 @@ cast(Cmd) ->
     cast(node(), Cmd).
 
 cast(Node, Cmd) ->
+    cast(Node, root, Cmd).
+
+cast(Node, Target, Cmd) ->
     Default = root_init(),
     spawn(fun() ->
                   riak_ensemble_peer:kmodify(Node,
-                                             root,
+                                             Target,
                                              cluster_state,
                                              {?MODULE, do_root_cast, Cmd},
                                              Default,

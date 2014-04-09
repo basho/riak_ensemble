@@ -1015,7 +1015,7 @@ maybe_update_ensembles(State=#state{ensemble=Ensemble, id=Id, fact=Fact}) ->
     Views = Fact#fact.views,
     case Ensemble of
         root ->
-            riak_ensemble_root:gossip(Vsn, Id, Views);
+            riak_ensemble_root:gossip(self(), Vsn, Id, Views);
         _ ->
             riak_ensemble_manager:update_ensemble(Ensemble, Id, Views, Vsn)
     end,
