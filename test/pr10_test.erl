@@ -41,17 +41,18 @@ cleanup() ->
 
 setup_prop() ->
     Nodes = node_names(?NUM_NODES),
-    setup_this_node(),
     cleanup_riak_ensemble_on_all_nodes(),
+    setup_this_node(),
     make_data_dirs(),
     start_riak_ensemble_on_all_nodes(),
     initial_join(Nodes),
     ok = create_root_ensemble(Nodes).
 
 prop_normal() ->
-    ?FORALL(Cmds, more_commands(1000, commands(?MODULE)),
+    ?FORALL(Cmds, more_commands(100, commands(?MODULE)),
         begin
             setup_prop(),
+            lager:info("length(Cmds) = ~p", [length(Cmds)]),
             {_H, _S, Res} = Result = run_commands(?MODULE, Cmds),
             aggregate(command_names(Cmds),
                 eqc_statem:pretty_commands(?MODULE, Cmds, Result, 
