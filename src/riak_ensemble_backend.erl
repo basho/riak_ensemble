@@ -33,7 +33,7 @@
          latest_obj/3,
          reply/2,
          pong/1,
-         sync_complete/1,
+         sync_complete/2,
          sync_failed/1]).
 
 %%===================================================================
@@ -74,6 +74,13 @@
 %% Callback for put operations. Responsible for sending a reply to
 %% the waiting `from' process using {@link reply/2}.
 -callback put(key(), obj(), from(), state()) -> state().
+
+%% Callback that determines if backend data can be trusted or not.
+%% Returns either boolean() or {boolean(), pid()} where the pid
+%% corresponds to an external backend process that is monitored
+%% by the peer. If the monitor fires, trust is reverified by again
+%% invoking this callback.
+-callback trusted(state()) -> boolean() | {boolean(), pid()}.
 
 %% Callback for sync_request sent from a remote peer that wants to sync
 %% with this peer. Responsible for sending a reply to the waiting `from'
@@ -142,9 +149,13 @@ reply({From, Id}, Reply) ->
     riak_ensemble_msg:reply(From, Id, Reply),
     ok.
 
--spec sync_complete(pid()) -> ok.
-sync_complete(Pid) ->
-    riak_ensemble_peer:sync_complete(Pid).
+%% Used by backends that implements async syncing to inform the peer
+%% that the sync completed successfully. The second argument should
+%% be the list of peers that were synced with. The peer will verify
+%% that these sibling peers are still trusted after the fact.
+-spec sync_complete(pid(), [peer_id()]) -> ok.
+sync_complete(Pid, Peers) ->
+    riak_ensemble_peer:sync_complete(Pid, Peers).
 
 -spec sync_failed(pid()) -> ok.
 sync_failed(Pid) ->
