@@ -525,7 +525,7 @@ prelead({quorum_met, _Replies}, State=#state{id=Id, preliminary=Prelim, fact=Fac
     NewFact = Fact#fact{leader=Id,
                         epoch=NextEpoch,
                         seq=0,
-                        view_vsn={NextEpoch, 0}},
+                        view_vsn={NextEpoch, -1}},
     State2 = State#state{fact=NewFact},
     leading(init, State2);
 prelead({timeout, _Replies}, State) ->
