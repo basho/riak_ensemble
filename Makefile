@@ -1,5 +1,5 @@
 DIALYZER_APPS=erts kernel stdlib crypto
-DIALYZER_FLAGS ?= -Wunmatched_returns -Werror_handling
+DIALYZER_FLAGS ?= -Wunmatched_returns -Werror_handling -Wrace_conditions
 
 REBAR ?= $(shell which rebar)
 
@@ -24,4 +24,4 @@ compile:
 include tools.mk
 
 typer:
-	typer --plt $(DEPS_PLT) -r ./src
+	typer --plt $(DEPS_PLT) -I include -r ./src

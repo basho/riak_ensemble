@@ -25,37 +25,46 @@
 %% API
 -export([start/0,
          start_link/0,
+         cluster/0,
+         get_cluster_state/0,
          get_peer_pid/2,
+         get_leader_pid/1,
          get_members/1,
+         get_views/1,
+         get_pending/1,
          get_leader/1,
          rleader_pid/0,
-         rget/2,
-         rmodify/3,
-         update_root_ensemble/2,
-         update_ensemble/2,
-         check_ensemble/2,
-         update_ensembles/2,
+         update_ensemble/4,
+         gossip/1,
+         gossip_pending/3,
          join/2,
+         enabled/0,
+         enable/0,
          create_ensemble/4,
          create_ensemble/5,
-         check_quorum/2]).
+         known_ensembles/0,
+         check_quorum/2,
+         count_quorum/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
 -include_lib("riak_ensemble_types.hrl").
+-define(ETS, ?MODULE).
 
--record(state, {version :: non_neg_integer(),
-                root :: [peer_id()],
-                root_leader :: leader_id(),
-                peers :: [{{ensemble_id(), peer_id()}, pid()}],
-                remote_peers :: [{{ensemble_id(), peer_id()}, pid()}],
-                ensembles :: [{ensemble_id(), ensemble_info()}]
+-type vsn_views()     :: {vsn(), views()}.
+-type ensemble_data() :: {ensemble_id(), leader_id(), vsn_views(), vsn_views()}.
+-type ensembles()     :: orddict(ensemble_id(), ensemble_data()).
+-type cluster_state() :: riak_ensemble_state:state().
+
+-record(state, {version       :: integer(),
+                ensemble_data :: ensembles(),
+                remote_peers  :: orddict(peer_id(), pid()),
+                cluster_state :: cluster_state()
                }).
 
 -type state() :: #state{}.
--type obj()   :: any().
 
 -type call_msg() :: {join, node()}.
 
@@ -76,22 +85,41 @@ start() ->
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
--spec join(node(), node()) -> ok | error.
+join(Same, Same) ->
+    {error, same_node};
 join(Node, OtherNode) ->
-    case node() of
-        Node ->
-            join(OtherNode);
-        _ ->
-            typed_call(Node, {join, OtherNode}, infinity)
+    typed_call(OtherNode, {join, Node}, infinity).
+
+-spec enabled() -> boolean().
+enabled() ->
+    try
+        ets:lookup_element(?ETS, enabled, 2)
+    catch _:_ ->
+            false
     end.
 
--spec update_root_ensemble(node(), ensemble_info()) -> ok.
-update_root_ensemble(Node, RootInfo) ->
-    typed_cast(Node, {update_root_ensemble, RootInfo}).
+-spec enable() -> ok | error.
+enable() ->
+    gen_server:call(?MODULE, enable, infinity).
 
--spec update_ensembles(node(), [{ensemble_id(), ensemble_info()}]) -> ok.
-update_ensembles(Node, Ensembles) ->
-    typed_cast(Node, {update_ensembles, Ensembles}).
+-spec get_leader_pid(ensemble_id()) -> undefined | pid().
+get_leader_pid(Ensemble) ->
+    case get_leader(Ensemble) of
+        undefined ->
+            undefined;
+        Leader ->
+            get_peer_pid(Ensemble, Leader)
+    end.
+
+%%%===================================================================
+%%% Gossip/State API
+%%%===================================================================
+
+gossip(CS) ->
+    gen_server:cast(?MODULE, {gossip, CS}).
+
+gossip_pending(Ensemble, Vsn, Views) ->
+    gen_server:cast(?MODULE, {gossip_pending, Ensemble, Vsn, Views}).
 
 %%%===================================================================
 %%% Root-based API
@@ -105,154 +133,123 @@ rleader() ->
 rleader_pid() ->
     get_peer_pid(root, rleader()).
 
--spec rget(any(), Default) -> {ok, obj()} | Default.
-rget(Key, Default) ->
-    Pid = rleader_pid(),
-    case riak_ensemble_peer:kget(node(), Pid, Key, 5000) of
-        {ok, Obj} ->
-            riak_ensemble_peer:obj_value(Obj, Default, riak_ensemble_basic_backend);
-        _ ->
-            Default
-    end.
-
--spec rmodify(_,_,_) -> std_reply().
-rmodify(Key, F, Default) ->
-    riak_ensemble_peer:kmodify(node(), root, Key, F, Default, 10000).
-
--spec root_set_ensemble(ensemble_id(), ensemble_info()) -> std_reply().
-root_set_ensemble(EnsembleId, Info=#ensemble_info{leader=Leader, members=Members, seq=Seq}) ->
-    rmodify(ensembles,
-            fun(Ensembles) ->
-                    case orddict:find(EnsembleId, Ensembles) of
-                        {ok, #ensemble_info{leader=CurLeader, members=CurMembers, seq=CurSeq}}
-                          when (CurSeq > Seq) or ({CurLeader, CurMembers, CurSeq} =:= {Leader, Members, Seq}) ->
-                            %% Already equal, don't rewrite
-                            failed;
-                        {ok, CurInfo} ->
-                            NewInfo = CurInfo#ensemble_info{leader=Leader,
-                                                            members=Members,
-                                                            seq=Seq},
-                            orddict:store(EnsembleId, NewInfo, Ensembles);
-                        error ->
-                            orddict:store(EnsembleId, Info, Ensembles)
-                    end
-            end,
-            []).
-
--spec root_set_ensemble_once(ensemble_id(), ensemble_info()) -> std_reply().
-root_set_ensemble_once(EnsembleId, Info) ->
-    riak_ensemble_peer:kmodify(node(), root, ensembles,
-                               fun(Ensembles) ->
-                                       case orddict:is_key(EnsembleId, Ensembles) of
-                                           true ->
-                                               failed;
-                                           false ->
-                                               orddict:store(EnsembleId, Info, Ensembles)
-                                       end
-                               end, [], 10000).
-
--spec root_check_ensemble(ensemble_id(), ensemble_info()) -> std_reply().
-root_check_ensemble(EnsembleId, #ensemble_info{members=Peers, seq=Seq}) ->
-    rmodify(ensembles,
-            fun(Ensembles) ->
-                    %% io:format("########### ~p~n", [orddict:find(EnsembleId, Ensembles)]),
-                    case orddict:find(EnsembleId, Ensembles) of
-                        {ok, CurInfo=#ensemble_info{members=CurPeers, seq=CurSeq}}
-                          when (CurPeers =/= Peers) and (CurSeq < Seq) ->
-                            %% io:format("######## ~p/~p // ~p/~p~n", [CurSeq, CurPeers, Seq, Peers]),
-                            NewInfo = CurInfo#ensemble_info{members=Peers, seq=Seq},
-                            orddict:store(EnsembleId, NewInfo, Ensembles);
-                        _ ->
-                            failed
-                    end
-            end, []).
-
--spec update_ensemble(ensemble_id(), ensemble_info()) -> ok.
-update_ensemble(EnsembleId, Info) ->
-    F = fun() ->
-                catch root_set_ensemble(EnsembleId, Info)
-        end,
-    spawn(F),
+-spec update_ensemble(ensemble_id(), peer_id(), views(), vsn()) -> ok.
+update_ensemble(Ensemble, Leader, Views, Vsn) ->
+    _ = riak_ensemble_root:update_ensemble(Ensemble, Leader, Views, Vsn),
     ok.
 
--spec check_ensemble(ensemble_id(), ensemble_info()) -> ok.
-check_ensemble(EnsembleId, Info) ->
-    catch root_check_ensemble(EnsembleId, Info),
-    ok.
-
--spec join(node()) -> ok | error.
-join(OtherNode) ->
-    Reply = riak_ensemble_peer:kmodify(node(), root, members,
-                                       fun(Members) ->
-                                               ordsets:add_element(OtherNode, Members)
-                                       end, [], 10000),
-    case Reply of
-        {ok, _Obj} ->
-            ok;
-        _ ->
-            error
-    end.
-
--spec create_ensemble(ensemble_id(), peer_id(), module(), [any()]) -> ok | error.
+-spec create_ensemble(ensemble_id(), peer_id(), module(), [any()])
+                     -> ok | {error, term()}.
 create_ensemble(EnsembleId, PeerId, Mod, Args) ->
     create_ensemble(EnsembleId, PeerId, [PeerId], Mod, Args).
 
--spec create_ensemble(ensemble_id(), leader_id(), [peer_id()], module(), [any()]) -> ok | error.
+-spec create_ensemble(ensemble_id(), leader_id(), [peer_id()], module(), [any()])
+                     -> ok | {error, term()}.
 create_ensemble(EnsembleId, EnsLeader, Members, Mod, Args) ->
-    Info = #ensemble_info{leader=EnsLeader, members=Members, seq={0,0}, mod=Mod, args=Args},
-    case root_set_ensemble_once(EnsembleId, Info) of
-        {ok, _Obj} ->
-            ok;
-        _ ->
-            error
+    Info = #ensemble_info{leader=EnsLeader, views=[Members], seq={0,0}, vsn={0,0}, mod=Mod, args=Args},
+    riak_ensemble_root:set_ensemble(EnsembleId, Info).
+
+-spec known_ensembles() -> undefined |
+                           {ok, orddict(ensemble_id(), ensemble_info())}.
+known_ensembles() ->
+    case riak_ensemble_peer:kget(node(), root, cluster_state, 5000) of
+        {ok, Obj} ->
+            case riak_ensemble_peer:obj_value(Obj, riak_ensemble_basic_backend) of
+                notfound ->
+                    undefined;
+                State ->
+                    Ensembles = riak_ensemble_state:ensembles(State),
+                    {ok, Ensembles}
+            end;
+        Error ->
+            Error
     end.
 
 %%%===================================================================
 %%% ETS-based API
 %%%===================================================================
 
--spec get_peer_pid(ensemble_id(), peer_id()) -> pid() | undefined.
-get_peer_pid(Ensemble, PeerId) ->
+-spec cluster() -> [node()].
+cluster() ->
     try
-        ets:lookup_element(em, {pid, {Ensemble, PeerId}}, 2)
+        ets:lookup_element(?ETS, cluster, 2)
+    catch _:_ ->
+            []
+    end.
+
+-spec get_cluster_state() -> cluster_state().
+get_cluster_state() ->
+    ets:lookup_element(?ETS, cluster_state, 2).
+
+-spec get_peer_pid(ensemble_id(), peer_id()) -> pid() | undefined.
+get_peer_pid(Ensemble, PeerId={_, Node}) ->
+    case node() of
+        Node ->
+            %% Local peer
+            riak_ensemble_peer_sup:get_peer_pid(Ensemble, PeerId);
+        _ ->
+            %% Remote peer
+            get_remote_peer_pid(Ensemble, PeerId)
+    end.
+
+get_remote_peer_pid(Ensemble, PeerId) ->
+    try
+        ets:lookup_element(?ETS, {remote_pid, {Ensemble, PeerId}}, 2)
     catch
         _:_ ->
             undefined
     end.
 
+-spec get_pending(ensemble_id()) -> {vsn(), [[peer_id()]]} | undefined.
+get_pending(EnsembleId) ->
+    try
+        ets:lookup_element(?ETS, EnsembleId, 4)
+    catch _:_ ->
+            undefined
+    end.
+
 -spec get_members(ensemble_id()) -> [peer_id()].
 get_members(EnsembleId) ->
+    Views = try
+                {_, Vs} = ets:lookup_element(?ETS, EnsembleId, 3),
+                Vs
+            catch _:_ ->
+                    []
+            end,
+    compute_members(Views).
+
+-spec get_views(ensemble_id()) -> {vsn(), views()}.
+get_views(EnsembleId) ->
     try
-        ets:lookup_element(em, EnsembleId, 3)
+        ets:lookup_element(?ETS, EnsembleId, 3)
     catch _:_ ->
-            []
+            {{0,0}, []}
     end.
 
 -spec get_leader(ensemble_id()) -> leader_id().
 get_leader(EnsembleId) ->
     try
-        ets:lookup_element(em, EnsembleId, 2)
+        ets:lookup_element(?ETS, EnsembleId, 2)
     catch _:_ ->
             undefined
     end.
 
 -spec check_quorum(ensemble_id(), timeout()) -> boolean().
 check_quorum(Ensemble, Timeout) ->
-    case get_leader(Ensemble) of
-        undefined ->
-            false;
-        Leader ->
-            case get_peer_pid(Ensemble, Leader) of
-                undefined ->
-                    false;
-                Pid ->
-                    case riak_ensemble_peer:check_quorum(Pid, Timeout) of
-                        ok ->
-                            true;
-                        _ ->
-                            false
-                    end
-            end
+    case riak_ensemble_peer:check_quorum(Ensemble, Timeout) of
+        ok ->
+            true;
+        _ ->
+            false
+    end.
+
+-spec count_quorum(ensemble_id(), timeout()) -> integer().
+count_quorum(Ensemble, Timeout) ->
+    case riak_ensemble_peer:count_quorum(Ensemble, Timeout) of
+        timeout ->
+            0;
+        Count when is_integer(Count) ->
+            Count
     end.
 
 %%%===================================================================
@@ -273,26 +270,71 @@ typed_cast(Node, Msg) when is_atom(Node) ->
 
 -spec init([]) -> {ok, state()}.
 init([]) ->
-    _ = ets:new(em, [named_table, public, {read_concurrency, true}, {write_concurrency, true}]),
+    _ = ets:new(?ETS, [named_table, public, {read_concurrency, true}, {write_concurrency, true}]),
     State = reload_state(),
-    State2 = reload_peers(State),
     schedule_tick(),
+    true = ets:insert(?ETS, {cluster_state, State#state.cluster_state}),
     gen_server:cast(self(), init),
-    {ok, State2}.
+    {ok, State}.
 
-handle_call({join, OtherNode}, From, State) ->
-    spawn_link(fun() ->
-                       Reply = join(OtherNode),
-                       gen_server:reply(From, Reply)
-               end),
-    {noreply, State};
+handle_call(enable, _From, State) ->
+    case activate(State) of
+        {ok, State2} ->
+            State3 = state_changed(State2),
+            {reply, ok, State3};
+        error ->
+            {reply, error, State}
+    end;
+handle_call({join, Node}, _From, State=#state{cluster_state=LocalCS}) ->
+    %% Note: The call here can deadlock if we ever join A -> B and B -> A
+    %% at the same time. There is no reason that should ever occur, but
+    %% to be safe we use a non-infinity timeout.
+    case gen_server:call({?MODULE, Node}, get_cluster_state, 60000) of
+        {ok, RemoteCS} ->
+            case join_allowed(LocalCS, RemoteCS) of
+                true ->
+                    State2 = State#state{cluster_state=RemoteCS},
+                    case save_state(State2) of
+                        ok ->
+                            Reply = riak_ensemble_root:join(Node),
+                            State3 = state_changed(State2),
+                            {reply, Reply, State3};
+                        Error={error,_} ->
+                            %% Failed to save, keep original state
+                            {reply, Error, State}
+                    end;
+                Error ->
+                    {reply, Error, State}
+            end;
+        _ ->
+            {reply, error, State}
+    end;
+handle_call(get_cluster_state, _From, State=#state{cluster_state=CS}) ->
+    {reply, {ok, CS}, State};
 
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
+handle_cast({gossip, OtherCS}, State=#state{cluster_state=CS}) ->
+    NewCS = case CS of
+                undefined ->
+                    OtherCS;
+                _ ->
+                    riak_ensemble_state:merge(CS, OtherCS)
+            end,
+    save_state_noreply(NewCS, State);
+
+handle_cast({gossip_pending, Ensemble, Vsn, Views}, State=#state{cluster_state=CS}) ->
+    case riak_ensemble_state:set_pending(Vsn, Ensemble, Views, CS) of
+        error ->
+            {noreply, State};
+        {ok, NewCS} ->
+            save_state_noreply(NewCS, State)
+    end;
+
 handle_cast({peer_pid, Peer, Pid}, State=#state{remote_peers=Remote}) ->
     Remote2 = orddict:store(Peer, Pid, Remote),
-    ets:insert(em, {{pid, Peer}, Pid}),
+    ets:insert(?ETS, {{remote_pid, Peer}, Pid}),
     erlang:monitor(process, Pid),
     %% io:format("Tracking remote peer: ~p :: ~p~n", [Peer, Pid]),
     {noreply, State#state{remote_peers=Remote2}};
@@ -312,47 +354,27 @@ handle_cast(init, State) ->
     State2 = state_changed(State),
     {noreply, State2};
 
-handle_cast({update_root_ensemble, RootInfo}, State=#state{ensembles=Ensembles}) ->
-    Seq = RootInfo#ensemble_info.seq,
-    State2 = case lists:keyfind(root, 1, Ensembles) of
-                 {_, CurInfo=#ensemble_info{seq=CurSeq}}
-                   when (CurInfo =/= RootInfo) and (CurSeq =< Seq) ->
-                     Ensembles2 = lists:keyreplace(root, 1, Ensembles, {root, RootInfo}),
-                     do_update_ensembles(Ensembles2, State);
-                 false ->
-                     Ensembles2 = [{root, RootInfo}|Ensembles],
-                     do_update_ensembles(Ensembles2, State);
-                 _ ->
-                     State
-             end,
-    {noreply, State2};
-
-handle_cast({update_ensembles, Ensembles}, State) ->
-    State2 = do_update_ensembles(Ensembles, State),
-    {noreply, State2};
-
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-do_update_ensembles(Ensembles, State) when Ensembles =:= State#state.ensembles ->
-    %% No change, ignore
-    State;
-do_update_ensembles(Ensembles, State) ->
-    %% io:format("Updating: ~p~n", [Ensembles]),
-    State2 = case lists:keyfind(root, 1, Ensembles) of
-                 {_, #ensemble_info{leader=RootLeader, members=Root}} ->
-                     State#state{root_leader=RootLeader,
-                                 root=Root,
-                                 ensembles=Ensembles};
-                 _ ->
-                     State#state{ensembles=Ensembles}
-             end,
-    State3 = state_changed(State2),
-    Insert = [{Ensemble, Leader, Members}
-              || {Ensemble, #ensemble_info{leader=Leader, members=Members}} <- Ensembles],
-    ets:insert(em, Insert),
-    ok = save_state(State3),
-    State3.
+save_state_noreply(NewCS, State) ->
+    State2 = State#state{cluster_state=NewCS},
+    case save_state(State2) of
+        ok ->
+            State3 = state_changed(State2),
+            {noreply, State3};
+        {error,_} ->
+            %% Failed to save, keep original state
+            {noreply, State}
+    end.
+
+pending(EnsembleId, Pending) ->
+    case orddict:find(EnsembleId, Pending) of
+        {ok, Val} ->
+            Val;
+        error ->
+            undefined
+    end.
 
 handle_info(tick, State) ->
     State2 = tick(State),
@@ -368,7 +390,7 @@ handle_info({'DOWN', _, _, Pid, _}, State=#state{remote_peers=Remote}) ->
         _ ->
             case lists:keytake(Pid, 2, Remote) of
                 {value, {Peer, _Pid}, Remote2} ->
-                    ets:delete(em, {pid, Peer}),
+                    ets:delete(?ETS, {remote_pid, Peer}),
                     %% io:format("Untracking remote peer: ~p :: ~p~n", [Peer, Pid]),
                     {noreply, State#state{remote_peers=Remote2}};
                 false ->
@@ -399,25 +421,49 @@ reload_state() ->
             initial_state()
     end.
 
--spec reload_peers(state()) -> state().
-reload_peers(State) ->
-    Peers = orddict:from_list(riak_ensemble_peer_sup:peers()),
-    Insert = [{{pid, Id}, Pid} || {Id, Pid} <- Peers],
-    ets:insert(em, Insert),
-    State#state{peers=Peers}.
-
 -spec initial_state() -> state().
 initial_state() ->
-    RootLeader = {root, node()},
-    Members = [RootLeader],
-    Root = #ensemble_info{leader=RootLeader, members=Members, seq={0,0}},
-    ets:insert(em, {root, RootLeader, element(2, Root)}),
-    State = #state{version=0,
-                   root=Members,
-                   root_leader=RootLeader,
-                   remote_peers=[],
-                   ensembles=[{root, Root}]},
+    ets:insert(?ETS, {enabled, false}),
+    ClusterName = {node(), erlang:now()},
+    CS = riak_ensemble_state:new(ClusterName),
+    State=#state{version=0,
+                 ensemble_data=[],
+                 remote_peers=[],
+                 cluster_state=CS},
     State.
+
+-spec activate(state()) -> {ok, state()} | error.
+activate(State=#state{cluster_state=CS}) ->
+    case riak_ensemble_state:enabled(CS) of
+        true ->
+            error;
+        false ->
+            RootLeader = {root, node()},
+            Members = [RootLeader],
+            Root = #ensemble_info{leader=RootLeader, views=[Members], seq={0,0}, vsn={0,0}},
+            ets:insert(?ETS, {root, RootLeader, element(2, Root), undefined}),
+            {ok, CS1} = riak_ensemble_state:enable(CS),
+            {ok, CS2} = riak_ensemble_state:add_member({0,0}, node(), CS1),
+            {ok, CS3} = riak_ensemble_state:set_ensemble(root, Root, CS2),
+            State2 = State#state{cluster_state=CS3},
+            {ok, State2}
+    end.
+
+-spec join_allowed(cluster_state(), cluster_state()) -> true               |
+                                                        remote_not_enabled |
+                                                        already_enabled.
+join_allowed(LocalCS, RemoteCS) ->
+    LocalEnabled = riak_ensemble_state:enabled(LocalCS),
+    RemoteEnabled = riak_ensemble_state:enabled(RemoteCS),
+    LocalId = riak_ensemble_state:id(LocalCS),
+    RemoteId = riak_ensemble_state:id(RemoteCS),
+    if not RemoteEnabled ->
+            remote_not_enabled;
+       LocalEnabled and (LocalId =/= RemoteId) ->
+            already_enabled;
+       true ->
+            true
+    end.
 
 -spec load_saved_state() -> not_found | {ok, state()}.
 load_saved_state() ->
@@ -428,8 +474,11 @@ load_saved_state() ->
             case erlang:crc32(Binary) of
                 CRC ->
                     try
-                        State = binary_to_term(Binary),
-                        #state{} = State,
+                        CS = binary_to_term(Binary),
+                        true = riak_ensemble_state:is_state(CS),
+                        State = #state{ensemble_data=[],
+                                       remote_peers=[],
+                                       cluster_state=CS},
                         {ok, State}
                     catch
                         _:_ ->
@@ -443,14 +492,10 @@ load_saved_state() ->
     end.
 
 -spec save_state(state()) -> ok | {error, term()}.
-save_state(State) ->
-    do_save_state(State#state{peers=[], remote_peers=[]}).
-
--spec do_save_state(state()) -> ok | {error, term()}.
-do_save_state(State) ->
+save_state(#state{cluster_state=CS}) ->
     {ok, Root} = application:get_env(riak_ensemble, data_root),
     File = filename:join([Root, "ensembles", "manager"]),
-    Binary = term_to_binary(State),
+    Binary = term_to_binary(CS),
     CRC = erlang:crc32(Binary),
     ok = filelib:ensure_dir(File),
     try
@@ -471,73 +516,149 @@ schedule_tick() ->
 -spec tick(state()) -> state().
 tick(State) ->
     request_remote_peers(State),
+    send_gossip(State),
     State.
 
+-spec send_gossip(state()) -> ok.
+send_gossip(#state{cluster_state=CS}) ->
+    Members = riak_ensemble_state:members(CS) -- [node()],
+    Shuffle = riak_ensemble_util:shuffle(Members),
+    Nodes = lists:sublist(Shuffle, 10),
+    _ = [gen_server:cast({?MODULE, Node}, {gossip, CS}) || Node <- Nodes],
+    ok.
+
+
+-spec compute_all_members(Ensemble, Pending, Views) -> [peer_id()] when
+      Ensemble :: ensemble_id(),
+      Pending :: orddict(ensemble_id(), {vsn(), views()}),
+      Views :: views().
+compute_all_members(Ensemble, Pending, Views) ->
+    case orddict:find(Ensemble, Pending) of
+        {ok, {_, PendingViews}} ->
+            compute_members(PendingViews ++ Views);
+        error ->
+            compute_members(Views)
+    end.
+
 -spec state_changed(state()) -> state().
-state_changed(State=#state{peers=Peers, ensembles=Ensembles}) ->
-    ThisNode = node(),
-    WantedPeers = [{{Ensemble, {Id, Node}}, Info}
-                   || {Ensemble, Info=#ensemble_info{members=EPeers}} <- Ensembles,
-                      {Id, Node} <- EPeers,
-                      Node =:= ThisNode],
-    %% TODO: Figure out why orddict_delta isn't giving us sorted results
-    Delta = lists:sort(riak_ensemble_util:orddict_delta(lists:sort(Peers),
-                                                        lists:sort(WantedPeers))),
-    %% io:format("WP/D/P: ~p~n~p~n~p~n", [WantedPeers, Delta, Peers]),
-    Peers2 =
-        [case Change of
-             {'$none', Info} ->
-                 #ensemble_info{mod=Mod, args=Args, members=Bootstrap} = Info,
+state_changed(State=#state{ensemble_data=EnsData, cluster_state=CS}) ->
+    true = ets:insert(?ETS, {cluster_state, CS}),
+    true = ets:insert(?ETS, {cluster, riak_ensemble_state:members(CS)}),
+    true = ets:insert(?ETS, {enabled, riak_ensemble_state:enabled(CS)}),
+    {NewEnsData, EnsChanges} = check_ensembles(EnsData, CS),
+    _ = [case Change of
+             {add, Obj} ->
+                 true = ets:insert(?ETS, Obj);
+             {del, Obj} ->
+                 true = ets:delete(?ETS, Obj);
+             {ins, Obj} ->
+                 true = ets:insert(?ETS, Obj)
+         end || Change <- EnsChanges],
+    PeerChanges = check_peers(CS),
+    _ = [case Change of
+             {add, {Ensemble, Id}, Info} ->
+                 #ensemble_info{mod=Mod, args=Args} = Info,
                  %% Start new peer
-                 %% io:format("Should start: ~p~n", [{Ensemble, Id, Bootstrap, Mod, Args}]),
-                 %% TODO: Make Bootstrap be views not membership
-                 NewPid = riak_ensemble_peer_sup:start_peer(Mod, Ensemble, Id, [Bootstrap], Args),
-                 {PeerId, NewPid};
-             {undefined, '$none'} ->
-                 {PeerId, undefined};
-             {_Pid, '$none'} ->
+                 _ = riak_ensemble_peer_sup:start_peer(Mod, Ensemble, Id, Args);
+             {del, {Ensemble, Id}} ->
                  %% Stop running peer
                  %% io:format("Should stop: ~p~n", [{Ensemble, Id}]),
-                 %% io:format("-- ~p~n", [orddict:fetch({Ensemble, Id}, Peers)]),
-                 %% io:format("Stopping: ~p~n", [Pid]),
-                 riak_ensemble_peer_sup:stop_peer(Ensemble, Id),
-                 {PeerId, undefined};
-             {Pid, _} ->
-                 {PeerId, Pid}
-         end || {PeerId={Ensemble, Id}, Change} <- Delta],
-    Peers3 = [Peer || Peer={_PeerId, Pid} <- Peers2,
-                      Pid =/= undefined],
-    State2 = State#state{peers=Peers3},
-    request_remote_peers(State2),
-    State2.
+                 ok = riak_ensemble_peer_sup:stop_peer(Ensemble, Id)
+         end || Change <- PeerChanges],
+    State#state{ensemble_data=NewEnsData}.
 
 -spec request_remote_peers(state()) -> ok.
 request_remote_peers(State=#state{remote_peers=Remote}) ->
-    ThisNode = node(),
     Root = case rleader() of
                undefined ->
                    [];
                Leader ->
-                   [{root, [Leader]}]
+                   [{root, Leader}]
            end,
-    LocalEns = Root ++ local_ensembles(State),
-    WantedRemote = [{Ensemble, Peer} || {Ensemble, Peers} <- LocalEns,
-                                        Peer={_, Node} <- Peers,
-                                        Node =/= ThisNode],
+    WantedRemote = Root ++ wanted_remote_peers(State),
     Need = ordsets:subtract(ordsets:from_list(WantedRemote),
                             orddict:fetch_keys(Remote)),
-    _ = [request_peer_pid2(Ensemble, Peer) || {Ensemble, Peer} <- Need],
+    _ = [request_peer_pid(Ensemble, Peer) || {Ensemble, Peer} <- Need],
     ok.
 
--spec request_peer_pid2(ensemble_id(), peer_id()) -> ok.
-request_peer_pid2(Ensemble, PeerId={_, Node}) ->
+-spec wanted_remote_peers(state()) -> [{ensemble_id(), peer_id()}].
+wanted_remote_peers(#state{cluster_state=CS}) ->
+    Ensembles = riak_ensemble_state:ensembles(CS),
+    Pending = riak_ensemble_state:pending(CS),
+    ThisNode = node(),
+    [{Ensemble, Peer} || {Ensemble, #ensemble_info{views=Views}} <- Ensembles,
+                         AllPeers <- [compute_all_members(Ensemble, Pending, Views)],
+                         lists:keymember(ThisNode, 2, AllPeers),
+                         Peer={_, Node} <- AllPeers,
+                         Node =/= ThisNode].
+
+-spec request_peer_pid(ensemble_id(), peer_id()) -> ok.
+request_peer_pid(Ensemble, PeerId={_, Node}) ->
     %% io:format("Requesting ~p/~p~n", [Ensemble, PeerId]),
     %% riak_ensemble_util:cast_unreliable({?MODULE, Node},
     %%                                    {request_peer_pid, self(), {Ensemble, PeerId}}).
     typed_cast(Node, {request_peer_pid, self(), {Ensemble, PeerId}}).
 
--spec local_ensembles(state()) -> [{ensemble_id(), [peer_id()]}].
-local_ensembles(#state{ensembles=Ensembles}) ->
+-spec compute_members(views()) -> [peer_id()].
+compute_members([Members]) ->
+    Members;
+compute_members(Views) ->
+    lists:usort(lists:append(Views)).
+
+-spec check_ensembles(ensembles(), cluster_state()) -> {ensembles(), Changes} when
+      Changes :: [{add | del | ins, ensemble_data()}].
+check_ensembles(EnsData, CS) ->
+    NewEnsData = ensemble_data(CS),
+    Delta = riak_ensemble_util:orddict_delta(EnsData, NewEnsData),
+    Changes =
+        [case Change of
+             {'$none', Obj} ->
+                 {add, Obj};
+             {Obj, '$none'} ->
+                 {del, Obj};
+             {_, Obj} ->
+                 {ins, Obj}
+         end || {_Ensemble, Change} <- Delta],
+    {NewEnsData, Changes}.
+
+-spec check_peers(cluster_state()) -> [Change] when
+      Change :: {add, {ensemble_id(), peer_id()}, ensemble_info()}
+              | {del, {ensemble_id(), peer_id()}}.
+check_peers(CS) ->
+    Peers = orddict:from_list(riak_ensemble_peer_sup:peers()),
+    NewPeers = wanted_peers(CS),
+    Delta = orddict:from_list(riak_ensemble_util:orddict_delta(Peers, NewPeers)),
+    Changes =
+        [case Change of
+             {'$none', Info} ->
+                 {add, PeerId, Info};
+             {_Pid, '$none'} ->
+                 {del, PeerId};
+             _ ->
+                 nothing
+         end || {PeerId, Change} <- Delta],
+    Changes2 = [Change || Change <- Changes,
+                          Change =/= nothing],
+    Changes2.
+
+-spec ensemble_data(cluster_state()) -> ensembles().
+ensemble_data(CS) ->
+    Ensembles = riak_ensemble_state:ensembles(CS),
+    Pending = riak_ensemble_state:pending(CS),
+    Data = [{Ensemble, {Ensemble, Leader, {Vsn,Views}, pending(Ensemble, Pending)}}
+            || {Ensemble, #ensemble_info{leader=Leader, views=Views, vsn=Vsn}} <- Ensembles],
+    orddict:from_list(Data).
+
+-spec wanted_peers(cluster_state()) -> orddict(Peer, Info) when
+      Peer :: {ensemble_id(), peer_id()},
+      Info :: ensemble_info().
+wanted_peers(CS) ->
+    Ensembles = riak_ensemble_state:ensembles(CS),
+    Pending = riak_ensemble_state:pending(CS),
     ThisNode = node(),
-    [{Ensemble, EPeers} || {Ensemble, #ensemble_info{members=EPeers}} <- Ensembles,
-                           lists:any(fun({_, Node}) -> Node =:= ThisNode end, EPeers)].
+    Wanted = [{{Ensemble, PeerId}, Info}
+              || {Ensemble, Info=#ensemble_info{views=EViews}} <- Ensembles,
+                 EPeers <- [compute_all_members(Ensemble, Pending, EViews)],
+                 PeerId={_, Node} <- EPeers,
+                 Node =:= ThisNode],
+    orddict:from_list(Wanted).
