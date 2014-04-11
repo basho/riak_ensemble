@@ -34,7 +34,7 @@
 -export([obj_epoch/1, obj_seq/1, obj_key/1, obj_value/1]).
 -export([set_obj_epoch/2, set_obj_seq/2, set_obj_value/2]).
 -export([get/3, put/4, tick/5, ping/2]).
--export([sync_request/2, sync/2]).
+-export([trusted/1, sync_request/2, sync/2]).
 
 -include_lib("riak_ensemble_types.hrl").
 
@@ -152,6 +152,9 @@ tick(_Epoch, _Seq, _Leader, _Views, State) ->
 -spec ping(pid(), state()) -> {ok, state()}.
 ping(_From, State) ->
     {ok, State}.
+
+trusted(_State) ->
+    false.
 
 %%===================================================================
 
