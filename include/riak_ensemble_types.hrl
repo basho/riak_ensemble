@@ -15,7 +15,7 @@
 -type orddict(Key,Val) :: [{Key, Val}].
 -type ordsets(Val) :: [Val].
 
--record(ensemble_info, {vsn,
+-record(ensemble_info, {vsn                                   :: vsn(),
                         mod     = riak_ensemble_basic_backend :: module(),
                         args    = []                          :: [any()],
                         leader                                :: leader_id(),
