@@ -243,10 +243,11 @@ quorum_timeout(#msgstate{replies=Replies}) ->
 quorum_met(Replies, #msgstate{id=Id, views=Views, required=Required}) ->
     quorum_met(Replies, Id, Views, Required).
 
+-spec quorum_met([peer_reply()], peer_id(), views()) -> true | false | nack.
 quorum_met(Replies, Id, Views) ->
     quorum_met(Replies, Id, Views, quorum).
 
--spec quorum_met([peer_reply()], peer_id(), views()) -> true | false | nack.
+-spec quorum_met([peer_reply()], peer_id(), views(), required()) -> true | false | nack.
 quorum_met(_Replies, _Id, [], _Required) ->
     true;
 quorum_met(Replies, Id, [Members|Views], Required) ->
