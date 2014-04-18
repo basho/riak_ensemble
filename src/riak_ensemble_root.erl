@@ -22,7 +22,7 @@
 -include_lib("riak_ensemble_types.hrl").
 
 %% API
--export([update_ensemble/4, set_ensemble/2, join/1, gossip/4]).
+-export([update_ensemble/4, set_ensemble/2, join/1, remove/1, gossip/4]).
 
 %% Exported internal callback functions
 -export([do_root_call/3, do_root_cast/3]).
@@ -53,6 +53,17 @@ join(Node) ->
         Error ->
             {error, Error}
     end.
+
+-spec remove(node()) -> ok | {error, term()}.
+remove(Node) ->
+    case call(node(), {remove, Node}, 60000) of
+        ok ->
+            _ = lager:info("REMOVE: success"),
+            ok;
+        Error ->
+            {error, Error}
+    end.
+
 
 -spec gossip(pid(), vsn(), peer_id(), views()) -> ok.
 gossip(Pid, Vsn, Leader, Views) when is_pid(Pid) ->
@@ -112,6 +123,14 @@ root_init() ->
 root_call({join, Node}, Vsn, State) ->
     _ = lager:info("join(Vsn): ~p :: ~p :: ~p", [Vsn, Node, riak_ensemble_state:members(State)]),
     case riak_ensemble_state:add_member(Vsn, Node, State) of
+        {ok, State2} ->
+            State2;
+        error ->
+            failed
+    end;
+root_call({remove, Node}, Vsn, State) ->
+    _ = lager:info("remove(Vsn): ~p :: ~p :: ~p", [Vsn, Node, riak_ensemble_state:members(State)]),
+    case riak_ensemble_state:del_member(Vsn, Node, State) of
         {ok, State2} ->
             State2;
         error ->
