@@ -7,6 +7,10 @@
 
 -include_lib("riak_ensemble_types.hrl").
 
+-define(QC_OUT(P),
+    eqc:on_output(fun(Str, Args) ->
+                io:format(user, Str, Args) end, P)).
+
 -behaviour(eqc_statem).
 
 %% eqc_statem exports
@@ -19,26 +23,17 @@
 -define(REQ_TIMEOUT, 1000).
 
 -record(state, {ensembles=sets:new() :: set(),
-                data=dict:new() :: dict(),
+        data=dict:new() :: dict()}).
 
-                %% A map of nodes to their tcp_debug port
-                tcp_ports=orddict:new() :: orddict:orddict(),
-                partitions=[] :: list(list(node))}).
-
-%%create_partitions(Partitions, State=#state{tcp_ports=Ports}) ->
-%%    [ok = create_partition(P, Ports) || P <- Partitions],
-%%    {ok, State#state{partitions=Partitions}}.
-%%
-%%create_partition({Nodes, Cookie}, Ports) ->
-%%    Res = [tcp_debug:call(Sock, [?MODULE, set_cookie, [Node, Cookie]] || 
-%%            Node <- Nodes, {_Port, Sock} = orddict:fetch(Node, Ports)],
-%%
-%%heal_partitions(State) ->
-%%
+ensemble_test_() ->
+    {setup, spawn, fun setup/0, fun cleanup/1, [
+        {timeout, 120, 
+            ?_assertEqual(true, quickcheck(?QC_OUT(eqc:testing_time(60,
+                            prop_ensemble()))))}]}.
 
 setup() ->
-    lager:start(),
     cleanup(),
+    lager:start(),
     make_data_dirs(),
     setup_this_node(),
     {ok, _Nodes} = launch_nodes(?NUM_NODES),
@@ -48,6 +43,9 @@ setup() ->
 
 stop_nodes() ->
     teardown_nodes(?NUM_NODES).
+
+cleanup(_) ->
+    cleanup().
 
 cleanup() ->
     {ok, _Nodes} = teardown_nodes(?NUM_NODES),
@@ -59,11 +57,12 @@ setup_prop() ->
     cleanup_riak_ensemble_on_all_nodes(),
     setup_this_node(),
     make_data_dirs(),
-    start_riak_ensemble_on_all_nodes(),
+    Output = start_riak_ensemble_on_all_nodes(),
+    io:format(user, "Started Output = ~p~n", [Output]),
     initial_join(Nodes),
     ok = create_root_ensemble(Nodes).
 
-prop_normal() ->
+prop_ensemble() ->
     ?FORALL(Cmds, more_commands(100, commands(?MODULE)),
         begin
             setup_prop(),
@@ -80,9 +79,7 @@ prop_normal() ->
 %% EQC Callbacks
 %% ==============================
 initial_state() ->
-%%    #state{tcp_ports={call, ?MODULE, start_tcp_debug, []},
-%%          partitions=[all_node_names()]}.
-#state{}.
+    #state{}.
 
 precondition(_State, _Call) ->
     true.
@@ -283,14 +280,6 @@ cleanup_riak_ensemble(Node, Path) ->
     rpc:call(Node, application, stop, [riak_ensemble]),
     os:cmd("rm -rf "++Path).
 
-start_tcp_debug() ->
-    lists:foldl(fun(Node, Acc) ->
-                    {ok, Port, _Pid} = tcp_debug:remote_start(Node),
-                    {ok, S} = tcp_debug:connect(Port),
-                    io:format(user, "sup muthafucka~n", []),
-                    orddict:store(Node, {Port, S}, Acc)
-        end, orddict:new(), node_names(?NUM_NODES)).
-
 start_riak_ensemble_on_all_nodes() ->
     [start_riak_ensemble(Node, Path)||
         {Node, Path} <- lists:zip(node_names(?NUM_NODES), data_dirs())].
@@ -314,12 +303,12 @@ launch_nodes(NumNodes) when is_integer(NumNodes) ->
     launch_nodes(node_names(NumNodes));
 launch_nodes(NodeNames) ->
     FmtStr =
-        "run_erl -daemon ~p/ ~p \"erl -pa .eunit -pa ebin -pa deps/*/ebin -setcookie riak_ensemble_test -name ~p\"",
+        "run_erl -daemon ~p/ ~p \"erl -pa ../.eunit -pa ../ebin -pa ../deps/*/ebin -setcookie riak_ensemble_test -name ~p\"",
     Output = lists:map(fun({NodeName, Dir}) ->
                            Str = io_lib:format(FmtStr, [Dir, Dir, NodeName]),
                            os:cmd(Str)
                        end, lists:zip(NodeNames, data_dirs())),
-    io:format("Output = ~p~n", [Output]),
+    io:format(user, "Output = ~p~n", [Output]),
     {ok, NodeNames}.
 
 teardown_nodes(NumNodes) when is_integer(NumNodes) ->
