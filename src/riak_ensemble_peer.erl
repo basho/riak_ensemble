@@ -327,13 +327,8 @@ local_put(Pid, Key, Obj, Timeout) when is_pid(Pid) ->
 probe(init, State) ->
     ?OUT("~p: probe~n", [State#state.id]),
     State2 = set_leader(undefined, State),
-    case is_pending(State2) of
-        true ->
-            pending(init, State2);
-        false ->
-            State3 = send_all(probe, State2),
-            {next_state, probe, State3}
-    end;
+    State3 = send_all(probe, State2),
+    {next_state, probe, State3};
 probe({quorum_met, Replies}, State=#state{fact=Fact, abandoned=Abandoned}) ->
     Latest = latest_fact(Replies, Fact),
     Existing = existing_leader(Replies, Abandoned, Latest),
