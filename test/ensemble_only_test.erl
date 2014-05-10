@@ -40,7 +40,7 @@ setup() ->
     setup_this_node(),
     {ok, _Nodes} = launch_nodes(?NUM_NODES),
     %% allow nodes to start with a dirty, dirty sleep
-    timer:sleep(?REQ_TIMEOUT),
+    timer:sleep(10000),
     [pong = net_adm:ping(Node) || Node <- node_names(?NUM_NODES)].
 
 stop_nodes() ->
