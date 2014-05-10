@@ -29,7 +29,7 @@
 
 ensemble_test_() ->
     {setup, spawn, fun setup/0, fun cleanup/1, [
-        {timeout, ?EUNIT_TIMEOUT, 
+        {timeout, ?EUNIT_TIMEOUT,
             ?_assertEqual(true, quickcheck(?QC_OUT(eqc:testing_time(?QC_TIMEOUT,
                             prop_ensemble()))))}]}.
 
@@ -70,18 +70,18 @@ prop_ensemble() ->
             ?ALWAYS(Repetitions, begin
                 setup_prop(),
                 ParallelCmds = element(2, Cmds),
-                lager:info("number of parallel sequences= ~p", 
+                lager:info("number of parallel sequences= ~p",
                     [length(ParallelCmds)]),
-                case ParallelCmds of 
+                case ParallelCmds of
                     [] ->
                         ok;
                     _ ->
-                        lager:info("len(Cmds) in first parallel sequence= ~p", 
+                        lager:info("len(Cmds) in first parallel sequence= ~p",
                                    [length(hd(element(2, Cmds)))])
                 end,
                 {_, _, Res} = Result = run_parallel_commands(?MODULE, Cmds),
                 aggregate(command_names(Cmds),
-                    eqc_statem:pretty_commands(?MODULE, Cmds, Result, 
+                    eqc_statem:pretty_commands(?MODULE, Cmds, Result,
                         begin
                             Res =:= ok
                         end))
@@ -98,22 +98,23 @@ precondition(_State, _Call) ->
 
 command(_State) ->
     frequency([{1, {call, ?MODULE, create_ensemble, [ensemble()]}},
-               {10, {call, riak_ensemble_client, kput_once, 
+               {10, {call, riak_ensemble_client, kput_once,
                        [ensemble(), key(), value(), ?REQ_TIMEOUT]}},
-               {10, {call, riak_ensemble_client, kget, 
+               {10, {call, riak_ensemble_client, kget,
                        [ensemble(), key(), ?REQ_TIMEOUT]}},
-               {10, {call, riak_ensemble_client, kover, 
+               {10, {call, riak_ensemble_client, kover,
                        [ensemble(), key(), value(), ?REQ_TIMEOUT]}},
                {10, {call, riak_ensemble_client, kdelete,
-                       [ensemble(), key(), ?REQ_TIMEOUT]}}, 
+                       [ensemble(), key(), ?REQ_TIMEOUT]}},
                {10, {call, ?MODULE, ksafe_delete,
-                       [ensemble(), key(), ?REQ_TIMEOUT]}}, 
+                       [ensemble(), key(), ?REQ_TIMEOUT]}},
                {10, {call, ?MODULE, kupdate,
                        [ensemble(), key(), value()]}}]).
 
-postcondition(_State, {call, _, kget, _}, {ok, {obj, _, _, _, notfound}}) ->
-    true;
-postcondition(#state{data=Data}, {call, _, kget, [Ensemble, Key, _]}, 
+postcondition(State, {call, _, kget, [Ensemble, Key, _]},
+    {ok, {obj, _, _, _, notfound}}) ->
+        is_missing(Ensemble, Key, State);
+postcondition(#state{data=Data}, {call, _, kget, [Ensemble, Key, _]},
     {ok, {obj, _, _, _, Val}}) ->
         compare_val({Ensemble, Key}, Val, Data);
 postcondition(_, {call, _, kget, _}, _)->
@@ -126,7 +127,7 @@ postcondition(_State, {call, _, kupdate, _}, {error, _}) ->
     true;
 postcondition(_State, {call, _, kupdate, [_Ensemble, _Key, NewVal]},
     {ok, {obj, _, _, _, Val}}) ->
-        NewVal =:= Val; 
+        NewVal =:= Val;
 postcondition(_State, {call, _, ksafe_delete, [_Ensemble, _Key, _]},
     {ok, {obj, _, _, _, notfound}}) ->
         true;
@@ -145,12 +146,12 @@ postcondition(_State, {call, _, kdelete, [_Ensemble, _Key, _]},
 postcondition(_State, {call, _, kover, _}, _) ->
     true.
 
-next_state(State=#state{ensembles=Ensembles}, Result, 
+next_state(State=#state{ensembles=Ensembles}, Result,
     {call, ?MODULE, create_ensemble, [Ensemble]}) ->
-        State#state{ensembles = {call, ?MODULE, maybe_add_ensemble, 
+        State#state{ensembles = {call, ?MODULE, maybe_add_ensemble,
                                  [Ensemble, Ensembles, Result]}};
 
-next_state(State=#state{data=Data}, Result, 
+next_state(State=#state{data=Data}, Result,
     {call, riak_ensemble_client, kget, [Ensemble, Key, _]}) ->
         %% In most protocols state doesn't change based on a read. But here, it
         %% can wipe out a chain of partial failures by giving a reliable answer.
@@ -158,24 +159,24 @@ next_state(State=#state{data=Data}, Result,
                 [Ensemble, Key, Data, Result]}};
 
 next_state(State, Result, {call, _, ksafe_delete, [Ensemble, Key, _]}) ->
-    State#state{data={call, ?MODULE, maybe_delete, 
+    State#state{data={call, ?MODULE, maybe_delete,
             [Ensemble, Key, Result, State]}};
 
 next_state(State, Result, {call, _, kdelete, [Ensemble, Key, _]}) ->
-    State#state{data={call, ?MODULE, maybe_delete, 
+    State#state{data={call, ?MODULE, maybe_delete,
         [Ensemble, Key, Result, State]}};
 
-next_state(State=#state{data=Data}, 
+next_state(State=#state{data=Data},
     Result, {call, _, kput_once, [Ensemble, Key, Val, _]}) ->
-        State#state{data = {call, ?MODULE, maybe_put_data, 
+        State#state{data = {call, ?MODULE, maybe_put_data,
                              [Ensemble, Key, Val, Data, Result]}};
 
-next_state(State=#state{data=Data}, 
+next_state(State=#state{data=Data},
     Result, {call, _, kover, [Ensemble, Key, Val, _]}) ->
-        State#state{data = {call, ?MODULE, maybe_put_data, 
+        State#state{data = {call, ?MODULE, maybe_put_data,
                 [Ensemble, Key, Val, Data, Result]}};
 
-next_state(State=#state{data=Data}, Result, 
+next_state(State=#state{data=Data}, Result,
     {call, _, kupdate, [Ensemble, Key, Val]}) ->
         State#state{data = {call, ?MODULE, maybe_put_data,
                 [Ensemble, Key, Val, Data, Result]}}.
@@ -226,12 +227,12 @@ kupdate(Ensemble, Key, Val) ->
             riak_ensemble_client:kupdate(Ensemble, Key, CurrentObj, Val,
                 ?REQ_TIMEOUT);
         E ->
-           E 
+           E
     end.
 
 create_ensemble(Ensemble) ->
-    Res = 
-    riak_ensemble_manager:create_ensemble(Ensemble, {Ensemble++"_peer", node()}, 
+    Res =
+    riak_ensemble_manager:create_ensemble(Ensemble, {Ensemble++"_peer", node()},
         members(Ensemble), riak_ensemble_basic_backend, []),
     wait_quorum(Ensemble),
     Res.
@@ -249,7 +250,7 @@ is_missing(Ensemble, Key, #state{data=Data}) ->
         error ->
             true;
         {ok, {possible, Vals}} ->
-            lists:member(notfound, Vals); 
+            lists:member(notfound, Vals);
         _V ->
             false
     end.
@@ -279,14 +280,14 @@ partial_failure_write(Ensemble, Key, Val, Data) ->
 %% Generators
 %% ==============================
 
-ensemble() -> 
+ensemble() ->
     name("ensemble", 3).
 
 key() ->
     name("key", 10).
 
 name(Prefix, Max) ->
-    oneof([Prefix ++ integer_to_list(I) || 
+    oneof([Prefix ++ integer_to_list(I) ||
             I <- lists:seq(1, Max)]).
 
 value() ->
@@ -335,7 +336,7 @@ wait_quorum(Ensemble) ->
 
 wait_cluster() ->
     try
-        case length(riak_ensemble_manager:cluster()) of 
+        case length(riak_ensemble_manager:cluster()) of
             ?NUM_NODES ->
                 ok;
             _ ->
@@ -405,5 +406,5 @@ all_node_names() ->
     [node_name(Num) || Num <- lists:seq(1, ?NUM_NODES)].
 
 node_name(Num) ->
-    list_to_atom("dev" ++ integer_to_list(Num) ++ "@127.0.0.1"). 
+    list_to_atom("dev" ++ integer_to_list(Num) ++ "@127.0.0.1").
 
