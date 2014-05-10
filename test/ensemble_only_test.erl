@@ -21,14 +21,16 @@
 
 -define(NUM_NODES, 5).
 -define(REQ_TIMEOUT, 1000).
+-define(QC_TIMEOUT, 300).
+-define(EUNIT_TIMEOUT, ?QC_TIMEOUT+10).
 
 -record(state, {ensembles=sets:new() :: set(),
                 data=dict:new() :: dict()}).
 
 ensemble_test_() ->
     {setup, spawn, fun setup/0, fun cleanup/1, [
-        {timeout, 120, 
-            ?_assertEqual(true, quickcheck(?QC_OUT(eqc:testing_time(60,
+        {timeout, ?EUNIT_TIMEOUT, 
+            ?_assertEqual(true, quickcheck(?QC_OUT(eqc:testing_time(?QC_TIMEOUT,
                             prop_ensemble()))))}]}.
 
 setup() ->
@@ -63,17 +65,27 @@ setup_prop() ->
     ok = create_root_ensemble(Nodes).
 
 prop_ensemble() ->
-    ?FORALL(Cmds, more_commands(100, commands(?MODULE)),
-        begin
-            setup_prop(),
-            lager:info("length(Cmds) = ~p", [length(Cmds)]),
-            {_H, _S, Res} = Result = run_commands(?MODULE, Cmds),
-            aggregate(command_names(Cmds),
-                eqc_statem:pretty_commands(?MODULE, Cmds, Result, 
-                    begin
-                        Res =:= ok
-                    end))
-         end).
+    ?FORALL(Repetitions, ?SHRINK(1,[10]),
+        ?FORALL(Cmds, more_commands(100, parallel_commands(?MODULE)),
+            ?ALWAYS(Repetitions, begin
+                setup_prop(),
+                ParallelCmds = element(2, Cmds),
+                lager:info("number of parallel sequences= ~p", 
+                    [length(ParallelCmds)]),
+                case ParallelCmds of 
+                    [] ->
+                        ok;
+                    _ ->
+                        lager:info("len(Cmds) in first parallel sequence= ~p", 
+                                   [length(hd(element(2, Cmds)))])
+                end,
+                {_, _, Res} = Result = run_parallel_commands(?MODULE, Cmds),
+                aggregate(command_names(Cmds),
+                    eqc_statem:pretty_commands(?MODULE, Cmds, Result, 
+                        begin
+                            Res =:= ok
+                        end))
+            end))).
 
 %% ==============================
 %% EQC Callbacks
