@@ -120,8 +120,7 @@ postcondition(_State, {call, _, ksafe_delete, [_Ensemble, _Key, _]},
         true;
 postcondition(State, {call, _, ksafe_delete, [Ensemble, Key, _]},
     {error, notfound}) ->
-        is_missing(Ensemble, Key, State) orelse 
-        is_possible(Ensemble, Key, State);
+        is_missing(Ensemble, Key, State);
 postcondition(_State, {call, _, ksafe_delete, [_Ensemble, _Key, _]},
     {error, _}) ->
         true;
@@ -237,6 +236,8 @@ is_missing(Ensemble, Key, #state{data=Data}) ->
     case dict:find({Ensemble, Key}, Data) of
         error ->
             true;
+        {ok, {possible, Vals}} ->
+            lists:member(notfound, Vals); 
         _V ->
             false
     end.
