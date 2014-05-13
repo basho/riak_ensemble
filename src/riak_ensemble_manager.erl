@@ -116,7 +116,7 @@ get_leader_pid(Ensemble) ->
 %%%===================================================================
 
 gossip(CS) ->
-    gen_server:cast(?MODULE, {gossip, CS}).
+    gen_server:call(?MODULE, {gossip, CS}, infinity).
 
 gossip_pending(Ensemble, Vsn, Views) ->
     gen_server:cast(?MODULE, {gossip_pending, Ensemble, Vsn, Views}).
@@ -135,8 +135,7 @@ rleader_pid() ->
 
 -spec update_ensemble(ensemble_id(), peer_id(), views(), vsn()) -> ok.
 update_ensemble(Ensemble, Leader, Views, Vsn) ->
-    _ = riak_ensemble_root:update_ensemble(Ensemble, Leader, Views, Vsn),
-    ok.
+    gen_server:call(?MODULE, {update_ensemble, Ensemble, Leader, Views, Vsn}, infinity).
 
 -spec create_ensemble(ensemble_id(), peer_id(), module(), [any()])
                      -> ok | {error, term()}.
@@ -312,16 +311,23 @@ handle_call({join, Node}, _From, State=#state{cluster_state=LocalCS}) ->
 handle_call(get_cluster_state, _From, State=#state{cluster_state=CS}) ->
     {reply, {ok, CS}, State};
 
+handle_call({update_ensemble, Ensemble, Leader, Views, Vsn}, _From, State=#state{cluster_state=CS}) ->
+    case riak_ensemble_state:update_ensemble(Vsn, Ensemble, Leader, Views, CS) of
+        error ->
+            {reply, error, State};
+        {ok, NewCS} ->
+            save_state_reply(NewCS, State)
+    end;
+
+handle_call({gossip, OtherCS}, _From, State) ->
+    NewCS = merge_gossip(OtherCS, State),
+    save_state_reply(NewCS, State);
+
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
-handle_cast({gossip, OtherCS}, State=#state{cluster_state=CS}) ->
-    NewCS = case CS of
-                undefined ->
-                    OtherCS;
-                _ ->
-                    riak_ensemble_state:merge(CS, OtherCS)
-            end,
+handle_cast({gossip, OtherCS}, State) ->
+    NewCS = merge_gossip(OtherCS, State),
     save_state_noreply(NewCS, State);
 
 handle_cast({gossip_pending, Ensemble, Vsn, Views}, State=#state{cluster_state=CS}) ->
@@ -366,6 +372,17 @@ save_state_noreply(NewCS, State) ->
         {error,_} ->
             %% Failed to save, keep original state
             {noreply, State}
+    end.
+
+save_state_reply(NewCS, State) ->
+    State2 = State#state{cluster_state=NewCS},
+    case maybe_save_state(State2) of
+        ok ->
+            State3 = state_changed(State2),
+            {reply, ok, State3};
+        {error,_} ->
+            %% Failed to save, keep original state
+            {reply, ok, State}
     end.
 
 pending(EnsembleId, Pending) ->
@@ -520,6 +537,14 @@ send_gossip(#state{cluster_state=CS}) ->
     _ = [gen_server:cast({?MODULE, Node}, {gossip, CS}) || Node <- Nodes],
     ok.
 
+-spec merge_gossip(cluster_state(), state()) -> cluster_state().
+merge_gossip(OtherCS, #state{cluster_state=CS}) ->
+    case CS of
+        undefined ->
+            OtherCS;
+        _ ->
+            riak_ensemble_state:merge(CS, OtherCS)
+    end.
 
 -spec compute_all_members(Ensemble, Pending, Views) -> [peer_id()] when
       Ensemble :: ensemble_id(),

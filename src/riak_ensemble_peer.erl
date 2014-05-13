@@ -113,6 +113,7 @@
                 trust_pid     :: pid(),
                 alive         :: integer(),
                 last_views    :: [[peer_id()]],
+                async         :: pid(),
                 self          :: pid()
                }).
 
@@ -1080,19 +1081,39 @@ maybe_clear_pending(State=#state{ensemble=Ensemble, fact=Fact}) ->
 maybe_update_ensembles(State=#state{ensemble=Ensemble, id=Id, fact=Fact}) ->
     Vsn = Fact#fact.view_vsn,
     Views = Fact#fact.views,
-    case Ensemble of
-        root ->
-            riak_ensemble_root:gossip(self(), Vsn, Id, Views);
-        _ ->
-            riak_ensemble_manager:update_ensemble(Ensemble, Id, Views, Vsn)
-    end,
+    State2 = case Ensemble of
+                 root ->
+                     riak_ensemble_root:gossip(self(), Vsn, Id, Views),
+                     State;
+                 _ ->
+                     maybe_async_update(Ensemble, Id, Views, Vsn, State)
+             end,
     case Fact#fact.pending of
         {PendingVsn, PendingViews} ->
             riak_ensemble_manager:gossip_pending(Ensemble, PendingVsn, PendingViews);
         _ ->
             ok
     end,
-    {ok, State}.
+    {ok, State2}.
+
+%% This function implements a non-blocking w/ backpressure approach to sending
+%% a message to the ensemble manager. Directly calling _manager:update_ensemble
+%% would block the peer. Changing _manager:update_ensemble to use a cast would
+%% provide no backpressure. Instead, the peer spawns a singleton process that
+%% blocks on the call. As long as the singleton helper is still alive, no new
+%% process will be spawned.
+-spec maybe_async_update(ensemble_id(), peer_id(), views(), vsn(), state()) -> state().
+maybe_async_update(Ensemble, Id, Views, Vsn, State=#state{async=Async}) ->
+    CurrentAsync = is_pid(Async) andalso is_process_alive(Async),
+    case CurrentAsync of
+        true ->
+            State;
+        false ->
+            Async2 = spawn(fun() ->
+                                   riak_ensemble_manager:update_ensemble(Ensemble, Id, Views, Vsn)
+                           end),
+            State#state{async=Async2}
+    end.
 
 -spec maybe_transition(state()) -> {ok|failed|shutdown, state()}.
 maybe_transition(State=#state{fact=Fact}) ->

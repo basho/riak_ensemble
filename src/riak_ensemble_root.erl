@@ -131,10 +131,10 @@ root_cast({gossip, Vsn, Leader, Views}, _Vsn, State) ->
     Info = #ensemble_info{vsn=Vsn, leader=Leader, views=Views},
     case riak_ensemble_state:set_ensemble(root, Info, State) of
         {ok, State2} ->
-            riak_ensemble_manager:gossip(State2),
+            maybe_async_gossip(State2),
             State2;
         error ->
-            riak_ensemble_manager:gossip(State),
+            maybe_async_gossip(State),
             failed
     end;
 root_cast({update_ensemble, Ensemble, Leader, Views, Vsn}, _Vsn, State) ->
@@ -143,4 +143,24 @@ root_cast({update_ensemble, Ensemble, Leader, Views, Vsn}, _Vsn, State) ->
             failed;
         {ok, State2} ->
             State2
+    end.
+
+%% This function implements a non-blocking w/ backpressure approach to sending
+%% a message to the ensemble manager. Directly calling _manager:gossip would
+%% block the root leader. Changing _manager:gossip to use a cast would provide
+%% no backpressure. Instead, the leader spawns a singleton process that blocks
+%% on the call. As long as the singleton helper is still alive, no new process
+%% will be spawned.
+maybe_async_gossip(State) ->
+    Async = erlang:get(async_gossip_pid),
+    CurrentAsync = is_pid(Async) andalso is_process_alive(Async),
+    case CurrentAsync of
+        true ->
+            ok;
+        false ->
+            Async2 = spawn(fun() ->
+                                   riak_ensemble_manager:gossip(State)
+                           end),
+            erlang:put(async_gossip_pid, Async2),
+            ok
     end.
