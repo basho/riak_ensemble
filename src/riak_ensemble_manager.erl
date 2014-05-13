@@ -467,27 +467,15 @@ join_allowed(LocalCS, RemoteCS) ->
 
 -spec load_saved_state() -> not_found | {ok, state()}.
 load_saved_state() ->
-    {ok, Root} = application:get_env(riak_ensemble, data_root),
-    File = filename:join([Root, "ensembles", "manager"]),
-    case file:read_file(File) of
-        {ok, <<CRC:32/integer, Binary/binary>>} ->
-            case erlang:crc32(Binary) of
-                CRC ->
-                    try
-                        CS = binary_to_term(Binary),
-                        true = riak_ensemble_state:is_state(CS),
-                        State = #state{ensemble_data=[],
-                                       remote_peers=[],
-                                       cluster_state=CS},
-                        {ok, State}
-                    catch
-                        _:_ ->
-                            not_found
-                    end;
-                _ ->
-                    not_found
-            end;
-        {error, _} ->
+    try
+        {ok, CS} = riak_ensemble_storage:get(manager),
+        true = riak_ensemble_state:is_state(CS),
+        State = #state{ensemble_data=[],
+                       remote_peers=[],
+                       cluster_state=CS},
+        {ok, State}
+    catch
+        _:_ ->
             not_found
     end.
 
@@ -502,17 +490,13 @@ maybe_save_state(State=#state{cluster_state=NewCS}) ->
 
 -spec save_state(state()) -> ok | {error, term()}.
 save_state(#state{cluster_state=CS}) ->
-    {ok, Root} = application:get_env(riak_ensemble, data_root),
-    File = filename:join([Root, "ensembles", "manager"]),
-    Binary = term_to_binary(CS),
-    CRC = erlang:crc32(Binary),
-    ok = filelib:ensure_dir(File),
     try
-        ok = riak_ensemble_util:replace_file(File, [<<CRC:32/integer>>, Binary])
+        true = riak_ensemble_storage:put(manager, CS),
+        %% ok = riak_ensemble_storage:sync(),
+        ok
     catch
         _:Err ->
-            error_logger:error_msg("Failed saving riak_ensemble_manager state to ~p: ~p~n",
-                                   [File, Err]),
+            error_logger:error_msg("Failed saving riak_ensemble_manager state~n"),
             {error, Err}
     end.
 
