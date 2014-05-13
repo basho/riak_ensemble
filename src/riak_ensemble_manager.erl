@@ -294,7 +294,7 @@ handle_call({join, Node}, _From, State=#state{cluster_state=LocalCS}) ->
             case join_allowed(LocalCS, RemoteCS) of
                 true ->
                     State2 = State#state{cluster_state=RemoteCS},
-                    case save_state(State2) of
+                    case maybe_save_state(State2) of
                         ok ->
                             Reply = riak_ensemble_root:join(Node),
                             State3 = state_changed(State2),
@@ -359,7 +359,7 @@ handle_cast(_Msg, State) ->
 
 save_state_noreply(NewCS, State) ->
     State2 = State#state{cluster_state=NewCS},
-    case save_state(State2) of
+    case maybe_save_state(State2) of
         ok ->
             State3 = state_changed(State2),
             {noreply, State3};
@@ -489,6 +489,15 @@ load_saved_state() ->
             end;
         {error, _} ->
             not_found
+    end.
+
+maybe_save_state(State=#state{cluster_state=NewCS}) ->
+    OldState = reload_state(),
+    OldCS = OldState#state.cluster_state,
+    if OldCS =:= NewCS ->
+            ok;
+       true ->
+            save_state(State)
     end.
 
 -spec save_state(state()) -> ok | {error, term()}.
