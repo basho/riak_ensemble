@@ -31,6 +31,7 @@
 -export([sync_complete/2, sync_failed/1]).
 -export([kget/4, kupdate/6, kput_once/5, kover/5, kmodify/6, kdelete/4,
          ksafe_delete/5, obj_value/2, obj_value/3]).
+-export([setup/2]).
 -export([probe/2, election/2, prepare/2, leading/2, following/2,
          probe/3, election/3, prepare/3, leading/3, following/3]).
 -export([pending/2, sync/2, all_sync/2, check_sync/2, prelead/2, prefollow/2,
@@ -1482,36 +1483,39 @@ get_value(Obj, Default, State) ->
 %%% gen_fsm callbacks
 %%%===================================================================
 
--spec init([any(),...]) -> {ok,election | probe,state()}.
+-spec init([any(),...]) -> {ok, setup, state()}.
 init([Mod, Ensemble, Id, Args]) ->
-    NumWorkers = 1,
     ?OUT("~p: starting~n", [Id]),
     {A,B,C} = os:timestamp(),
     _ = random:seed(A + erlang:phash2(Id),
                     B + erlang:phash2(node()),
                     C),
     ETS = ets:new(x, [public, {read_concurrency, true}, {write_concurrency, true}]),
-    Saved = reload_fact(Ensemble, Id),
-    Workers = start_workers(NumWorkers, ETS),
-    Members = compute_members(Saved#fact.views),
     State = #state{id=Id,
                    ensemble=Ensemble,
                    ets=ETS,
-                   workers=list_to_tuple(Workers),
-                   fact=Saved,
-                   members=Members,
                    peers=[],
                    trust=false,
                    alive=?ALIVE,
-                   mod=Mod,
-                   modstate=riak_ensemble_backend:start(Mod, Ensemble, Id, Args)},
+                   mod=Mod},
+    gen_fsm:send_event(self(), {init, Args}),
+    riak_ensemble_peer_sup:register_peer(Ensemble, Id, self(), ETS),
+    {ok, setup, State}.
+
+setup({init, Args}, State0=#state{id=Id, ensemble=Ensemble, ets=ETS, mod=Mod}) ->
+    NumWorkers = 1,
+    Saved = reload_fact(Ensemble, Id),
+    Workers = start_workers(NumWorkers, ETS),
+    Members = compute_members(Saved#fact.views),
+    State = State0#state{workers=list_to_tuple(Workers),
+                         fact=Saved,
+                         members=Members,
+                         modstate=riak_ensemble_backend:start(Mod, Ensemble, Id, Args)},
     State2 = check_views(State),
     %% TODO: Why are we local commiting on startup?
     State3 = local_commit(State2#state.fact, State2),
     State4 = mod_trusted(State3),
-    gen_fsm:send_event(self(), init),
-    riak_ensemble_peer_sup:register_peer(Ensemble, Id, self(), ETS),
-    {ok, probe, State4}.
+    probe(init, State4).
 
 -spec handle_event(_, atom(), state()) -> {next_state, atom(), state()}.
 handle_event({reply, ReqId, Peer, Reply}, StateName, State) ->
