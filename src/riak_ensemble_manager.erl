@@ -643,9 +643,9 @@ check_ensembles(EnsData, CS) ->
       Change :: {add, {ensemble_id(), peer_id()}, ensemble_info()}
               | {del, {ensemble_id(), peer_id()}}.
 check_peers(CS) ->
-    Peers = orddict:from_list(riak_ensemble_peer_sup:peers()),
+    Peers = orddict_from_list(riak_ensemble_peer_sup:peers()),
     NewPeers = wanted_peers(CS),
-    Delta = orddict:from_list(riak_ensemble_util:orddict_delta(Peers, NewPeers)),
+    Delta = orddict_from_list(riak_ensemble_util:orddict_delta(Peers, NewPeers)),
     Changes =
         [case Change of
              {'$none', Info} ->
@@ -665,7 +665,7 @@ ensemble_data(CS) ->
     Pending = riak_ensemble_state:pending(CS),
     Data = [{Ensemble, {Ensemble, Leader, {Vsn,Views}, pending(Ensemble, Pending)}}
             || {Ensemble, #ensemble_info{leader=Leader, views=Views, vsn=Vsn}} <- Ensembles],
-    orddict:from_list(Data).
+    orddict_from_list(Data).
 
 -spec wanted_peers(cluster_state()) -> orddict(Peer, Info) when
       Peer :: {ensemble_id(), peer_id()},
@@ -679,4 +679,16 @@ wanted_peers(CS) ->
                  EPeers <- [compute_all_members(Ensemble, Pending, EViews)],
                  PeerId={_, Node} <- EPeers,
                  Node =:= ThisNode],
-    orddict:from_list(Wanted).
+    orddict_from_list(Wanted).
+
+%% Optimized version of orddict:from_list.
+%% Much faster and generates much less garbage than orddict:from_list,
+%% especially for large lists.
+%%
+%% Eg. from simple microbenchmark (time in us)
+%% length   orddict:from_list   orddict_from_list
+%%  100      139                 34
+%%  1000     11973               463
+%%  10000    1241925             6514
+orddict_from_list(L) ->
+    lists:ukeysort(1, L).
