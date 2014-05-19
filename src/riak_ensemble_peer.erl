@@ -31,6 +31,7 @@
 -export([sync_complete/2, sync_failed/1]).
 -export([kget/4, kupdate/6, kput_once/5, kover/5, kmodify/6, kdelete/4,
          ksafe_delete/5, obj_value/2, obj_value/3]).
+-export([setup/2]).
 -export([probe/2, election/2, prepare/2, leading/2, following/2,
          probe/3, election/3, prepare/3, leading/3, following/3]).
 -export([pending/2, sync/2, all_sync/2, check_sync/2, prelead/2, prefollow/2,
@@ -113,6 +114,7 @@
                 trust_pid     :: pid(),
                 alive         :: integer(),
                 last_views    :: [[peer_id()]],
+                async         :: pid(),
                 self          :: pid()
                }).
 
@@ -1080,19 +1082,39 @@ maybe_clear_pending(State=#state{ensemble=Ensemble, fact=Fact}) ->
 maybe_update_ensembles(State=#state{ensemble=Ensemble, id=Id, fact=Fact}) ->
     Vsn = Fact#fact.view_vsn,
     Views = Fact#fact.views,
-    case Ensemble of
-        root ->
-            riak_ensemble_root:gossip(self(), Vsn, Id, Views);
-        _ ->
-            riak_ensemble_manager:update_ensemble(Ensemble, Id, Views, Vsn)
-    end,
+    State2 = case Ensemble of
+                 root ->
+                     riak_ensemble_root:gossip(self(), Vsn, Id, Views),
+                     State;
+                 _ ->
+                     maybe_async_update(Ensemble, Id, Views, Vsn, State)
+             end,
     case Fact#fact.pending of
         {PendingVsn, PendingViews} ->
             riak_ensemble_manager:gossip_pending(Ensemble, PendingVsn, PendingViews);
         _ ->
             ok
     end,
-    {ok, State}.
+    {ok, State2}.
+
+%% This function implements a non-blocking w/ backpressure approach to sending
+%% a message to the ensemble manager. Directly calling _manager:update_ensemble
+%% would block the peer. Changing _manager:update_ensemble to use a cast would
+%% provide no backpressure. Instead, the peer spawns a singleton process that
+%% blocks on the call. As long as the singleton helper is still alive, no new
+%% process will be spawned.
+-spec maybe_async_update(ensemble_id(), peer_id(), views(), vsn(), state()) -> state().
+maybe_async_update(Ensemble, Id, Views, Vsn, State=#state{async=Async}) ->
+    CurrentAsync = is_pid(Async) andalso is_process_alive(Async),
+    case CurrentAsync of
+        true ->
+            State;
+        false ->
+            Async2 = spawn(fun() ->
+                                   riak_ensemble_manager:update_ensemble(Ensemble, Id, Views, Vsn)
+                           end),
+            State#state{async=Async2}
+    end.
 
 -spec maybe_transition(state()) -> {ok|failed|shutdown, state()}.
 maybe_transition(State=#state{fact=Fact}) ->
@@ -1461,36 +1483,39 @@ get_value(Obj, Default, State) ->
 %%% gen_fsm callbacks
 %%%===================================================================
 
--spec init([any(),...]) -> {ok,election | probe,state()}.
+-spec init([any(),...]) -> {ok, setup, state()}.
 init([Mod, Ensemble, Id, Args]) ->
-    NumWorkers = 1,
     ?OUT("~p: starting~n", [Id]),
     {A,B,C} = os:timestamp(),
     _ = random:seed(A + erlang:phash2(Id),
                     B + erlang:phash2(node()),
                     C),
     ETS = ets:new(x, [public, {read_concurrency, true}, {write_concurrency, true}]),
-    Saved = reload_fact(Ensemble, Id),
-    Workers = start_workers(NumWorkers, ETS),
-    Members = compute_members(Saved#fact.views),
     State = #state{id=Id,
                    ensemble=Ensemble,
                    ets=ETS,
-                   workers=list_to_tuple(Workers),
-                   fact=Saved,
-                   members=Members,
                    peers=[],
                    trust=false,
                    alive=?ALIVE,
-                   mod=Mod,
-                   modstate=riak_ensemble_backend:start(Mod, Ensemble, Id, Args)},
+                   mod=Mod},
+    gen_fsm:send_event(self(), {init, Args}),
+    riak_ensemble_peer_sup:register_peer(Ensemble, Id, self(), ETS),
+    {ok, setup, State}.
+
+setup({init, Args}, State0=#state{id=Id, ensemble=Ensemble, ets=ETS, mod=Mod}) ->
+    NumWorkers = 1,
+    Saved = reload_fact(Ensemble, Id),
+    Workers = start_workers(NumWorkers, ETS),
+    Members = compute_members(Saved#fact.views),
+    State = State0#state{workers=list_to_tuple(Workers),
+                         fact=Saved,
+                         members=Members,
+                         modstate=riak_ensemble_backend:start(Mod, Ensemble, Id, Args)},
     State2 = check_views(State),
     %% TODO: Why are we local commiting on startup?
     State3 = local_commit(State2#state.fact, State2),
     State4 = mod_trusted(State3),
-    gen_fsm:send_event(self(), init),
-    riak_ensemble_peer_sup:register_peer(Ensemble, Id, self(), ETS),
-    {ok, probe, State4}.
+    probe(init, State4).
 
 -spec handle_event(_, atom(), state()) -> {next_state, atom(), state()}.
 handle_event({reply, ReqId, Peer, Reply}, StateName, State) ->
@@ -1737,26 +1762,7 @@ reload_fact(Ensemble, Id) ->
 
 -spec load_saved_fact(_,_) -> not_found | {ok,_}.
 load_saved_fact(Ensemble, Id) ->
-    <<Hash:160/integer>> = riak_ensemble_util:sha(term_to_binary({Ensemble, Id})),
-    Name = integer_to_list(Hash),
-    {ok, Root} = application:get_env(riak_ensemble, data_root),
-    File = filename:join([Root, "ensembles", Name]),
-    case file:read_file(File) of
-        {ok, <<CRC:32/integer, Binary/binary>>} ->
-            case erlang:crc32(Binary) of
-                CRC ->
-                    try
-                        {ok, binary_to_term(Binary)}
-                    catch
-                        _:_ ->
-                            not_found
-                    end;
-                _ ->
-                    not_found
-            end;
-        {error, _} ->
-            not_found
-    end.
+    riak_ensemble_storage:get({Ensemble, Id}).
 
 -spec maybe_save_fact(state()) -> ok.
 maybe_save_fact(State=#state{ensemble=Ensemble, id=Id, fact=NewFact}) ->
@@ -1777,15 +1783,9 @@ should_save(NewFact, OldFact) ->
 
 -spec save_fact(state()) -> ok | {error,_}.
 save_fact(#state{ensemble=Ensemble, id=Id, fact=Fact}) ->
-    <<Hash:160/integer>> = riak_ensemble_util:sha(term_to_binary({Ensemble, Id})),
-    Name = integer_to_list(Hash),
-    {ok, Root} = application:get_env(riak_ensemble, data_root),
-    File = filename:join([Root, "ensembles", Name]),
-    Binary = term_to_binary(Fact),
-    CRC = erlang:crc32(Binary),
-    ok = filelib:ensure_dir(File),
     try
-        ok = riak_ensemble_util:replace_file(File, [<<CRC:32/integer>>, Binary])
+        true = riak_ensemble_storage:put({Ensemble, Id}, Fact),
+        ok = riak_ensemble_storage:sync()
     catch
         _:Err ->
             %% _ = lager:error("Failed saving ensemble ~p state to ~p: ~p",

@@ -1,7 +1,7 @@
 DIALYZER_APPS=erts kernel stdlib crypto
 DIALYZER_FLAGS ?= -Wunmatched_returns -Werror_handling -Wrace_conditions
 
-REBAR ?= $(shell which rebar)
+include tools.mk
 
 ifeq ($(REBAR),)
 $(error "Rebar not found. Please set REBAR variable or update PATH")
@@ -20,8 +20,6 @@ deps:
 
 compile:
 	$(REBAR) skip_deps=true compile
-
-include tools.mk
 
 typer:
 	typer --plt $(DEPS_PLT) -I include -r ./src

@@ -116,7 +116,7 @@ get_leader_pid(Ensemble) ->
 %%%===================================================================
 
 gossip(CS) ->
-    gen_server:cast(?MODULE, {gossip, CS}).
+    gen_server:call(?MODULE, {gossip, CS}, infinity).
 
 gossip_pending(Ensemble, Vsn, Views) ->
     gen_server:cast(?MODULE, {gossip_pending, Ensemble, Vsn, Views}).
@@ -135,8 +135,7 @@ rleader_pid() ->
 
 -spec update_ensemble(ensemble_id(), peer_id(), views(), vsn()) -> ok.
 update_ensemble(Ensemble, Leader, Views, Vsn) ->
-    _ = riak_ensemble_root:update_ensemble(Ensemble, Leader, Views, Vsn),
-    ok.
+    gen_server:call(?MODULE, {update_ensemble, Ensemble, Leader, Views, Vsn}, infinity).
 
 -spec create_ensemble(ensemble_id(), peer_id(), module(), [any()])
                      -> ok | {error, term()}.
@@ -294,7 +293,7 @@ handle_call({join, Node}, _From, State=#state{cluster_state=LocalCS}) ->
             case join_allowed(LocalCS, RemoteCS) of
                 true ->
                     State2 = State#state{cluster_state=RemoteCS},
-                    case save_state(State2) of
+                    case maybe_save_state(State2) of
                         ok ->
                             Reply = riak_ensemble_root:join(Node),
                             State3 = state_changed(State2),
@@ -312,16 +311,23 @@ handle_call({join, Node}, _From, State=#state{cluster_state=LocalCS}) ->
 handle_call(get_cluster_state, _From, State=#state{cluster_state=CS}) ->
     {reply, {ok, CS}, State};
 
+handle_call({update_ensemble, Ensemble, Leader, Views, Vsn}, _From, State=#state{cluster_state=CS}) ->
+    case riak_ensemble_state:update_ensemble(Vsn, Ensemble, Leader, Views, CS) of
+        error ->
+            {reply, error, State};
+        {ok, NewCS} ->
+            save_state_reply(NewCS, State)
+    end;
+
+handle_call({gossip, OtherCS}, _From, State) ->
+    NewCS = merge_gossip(OtherCS, State),
+    save_state_reply(NewCS, State);
+
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
-handle_cast({gossip, OtherCS}, State=#state{cluster_state=CS}) ->
-    NewCS = case CS of
-                undefined ->
-                    OtherCS;
-                _ ->
-                    riak_ensemble_state:merge(CS, OtherCS)
-            end,
+handle_cast({gossip, OtherCS}, State) ->
+    NewCS = merge_gossip(OtherCS, State),
     save_state_noreply(NewCS, State);
 
 handle_cast({gossip_pending, Ensemble, Vsn, Views}, State=#state{cluster_state=CS}) ->
@@ -359,13 +365,24 @@ handle_cast(_Msg, State) ->
 
 save_state_noreply(NewCS, State) ->
     State2 = State#state{cluster_state=NewCS},
-    case save_state(State2) of
+    case maybe_save_state(State2) of
         ok ->
             State3 = state_changed(State2),
             {noreply, State3};
         {error,_} ->
             %% Failed to save, keep original state
             {noreply, State}
+    end.
+
+save_state_reply(NewCS, State) ->
+    State2 = State#state{cluster_state=NewCS},
+    case maybe_save_state(State2) of
+        ok ->
+            State3 = state_changed(State2),
+            {reply, ok, State3};
+        {error,_} ->
+            %% Failed to save, keep original state
+            {reply, ok, State}
     end.
 
 pending(EnsembleId, Pending) ->
@@ -467,43 +484,36 @@ join_allowed(LocalCS, RemoteCS) ->
 
 -spec load_saved_state() -> not_found | {ok, state()}.
 load_saved_state() ->
-    {ok, Root} = application:get_env(riak_ensemble, data_root),
-    File = filename:join([Root, "ensembles", "manager"]),
-    case file:read_file(File) of
-        {ok, <<CRC:32/integer, Binary/binary>>} ->
-            case erlang:crc32(Binary) of
-                CRC ->
-                    try
-                        CS = binary_to_term(Binary),
-                        true = riak_ensemble_state:is_state(CS),
-                        State = #state{ensemble_data=[],
-                                       remote_peers=[],
-                                       cluster_state=CS},
-                        {ok, State}
-                    catch
-                        _:_ ->
-                            not_found
-                    end;
-                _ ->
-                    not_found
-            end;
-        {error, _} ->
+    try
+        {ok, CS} = riak_ensemble_storage:get(manager),
+        true = riak_ensemble_state:is_state(CS),
+        State = #state{ensemble_data=[],
+                       remote_peers=[],
+                       cluster_state=CS},
+        {ok, State}
+    catch
+        _:_ ->
             not_found
+    end.
+
+maybe_save_state(State=#state{cluster_state=NewCS}) ->
+    OldState = reload_state(),
+    OldCS = OldState#state.cluster_state,
+    if OldCS =:= NewCS ->
+            ok;
+       true ->
+            save_state(State)
     end.
 
 -spec save_state(state()) -> ok | {error, term()}.
 save_state(#state{cluster_state=CS}) ->
-    {ok, Root} = application:get_env(riak_ensemble, data_root),
-    File = filename:join([Root, "ensembles", "manager"]),
-    Binary = term_to_binary(CS),
-    CRC = erlang:crc32(Binary),
-    ok = filelib:ensure_dir(File),
     try
-        ok = riak_ensemble_util:replace_file(File, [<<CRC:32/integer>>, Binary])
+        %% Note: not syncing here is an intentional performance decision
+        true = riak_ensemble_storage:put(manager, CS),
+        ok
     catch
         _:Err ->
-            error_logger:error_msg("Failed saving riak_ensemble_manager state to ~p: ~p~n",
-                                   [File, Err]),
+            error_logger:error_msg("Failed saving riak_ensemble_manager state~n"),
             {error, Err}
     end.
 
@@ -527,6 +537,14 @@ send_gossip(#state{cluster_state=CS}) ->
     _ = [gen_server:cast({?MODULE, Node}, {gossip, CS}) || Node <- Nodes],
     ok.
 
+-spec merge_gossip(cluster_state(), state()) -> cluster_state().
+merge_gossip(OtherCS, #state{cluster_state=CS}) ->
+    case CS of
+        undefined ->
+            OtherCS;
+        _ ->
+            riak_ensemble_state:merge(CS, OtherCS)
+    end.
 
 -spec compute_all_members(Ensemble, Pending, Views) -> [peer_id()] when
       Ensemble :: ensemble_id(),
@@ -625,9 +643,9 @@ check_ensembles(EnsData, CS) ->
       Change :: {add, {ensemble_id(), peer_id()}, ensemble_info()}
               | {del, {ensemble_id(), peer_id()}}.
 check_peers(CS) ->
-    Peers = orddict:from_list(riak_ensemble_peer_sup:peers()),
+    Peers = orddict_from_list(riak_ensemble_peer_sup:peers()),
     NewPeers = wanted_peers(CS),
-    Delta = orddict:from_list(riak_ensemble_util:orddict_delta(Peers, NewPeers)),
+    Delta = orddict_from_list(riak_ensemble_util:orddict_delta(Peers, NewPeers)),
     Changes =
         [case Change of
              {'$none', Info} ->
@@ -647,7 +665,7 @@ ensemble_data(CS) ->
     Pending = riak_ensemble_state:pending(CS),
     Data = [{Ensemble, {Ensemble, Leader, {Vsn,Views}, pending(Ensemble, Pending)}}
             || {Ensemble, #ensemble_info{leader=Leader, views=Views, vsn=Vsn}} <- Ensembles],
-    orddict:from_list(Data).
+    orddict_from_list(Data).
 
 -spec wanted_peers(cluster_state()) -> orddict(Peer, Info) when
       Peer :: {ensemble_id(), peer_id()},
@@ -661,4 +679,16 @@ wanted_peers(CS) ->
                  EPeers <- [compute_all_members(Ensemble, Pending, EViews)],
                  PeerId={_, Node} <- EPeers,
                  Node =:= ThisNode],
-    orddict:from_list(Wanted).
+    orddict_from_list(Wanted).
+
+%% Optimized version of orddict:from_list.
+%% Much faster and generates much less garbage than orddict:from_list,
+%% especially for large lists.
+%%
+%% Eg. from simple microbenchmark (time in us)
+%% length   orddict:from_list   orddict_from_list
+%%  100      139                 34
+%%  1000     11973               463
+%%  10000    1241925             6514
+orddict_from_list(L) ->
+    lists:ukeysort(1, L).
