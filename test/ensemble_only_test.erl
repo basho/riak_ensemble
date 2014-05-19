@@ -22,10 +22,12 @@
 -define(NUM_NODES, 5).
 -define(REQ_TIMEOUT, 1000).
 -define(QC_TIMEOUT, 300).
--define(EUNIT_TIMEOUT, ?QC_TIMEOUT+10).
+-define(EUNIT_TIMEOUT, 1800).
 
 -record(state, {ensembles=sets:new() :: set(),
-                data=dict:new() :: dict()}).
+                data=dict:new() :: dict(),
+                up_nodes=other_node_names() :: list(atom()),
+                down_nodes=[] :: list(atom())}).
 
 ensemble_test_() ->
     {setup, spawn, fun setup/0, fun cleanup/1, [
@@ -34,51 +36,63 @@ ensemble_test_() ->
                             prop_ensemble()))))}]}.
 
 setup() ->
-    cleanup(),
+    net_kernel:start(['ensemble_tester@127.0.0.1']),
+    erlang:set_cookie(node(), riak_ensemble_test),
     lager:start(),
-    make_data_dirs(),
-    setup_this_node(),
-    {ok, _Nodes} = launch_nodes(?NUM_NODES),
-    %% allow nodes to start with a dirty, dirty sleep
-    timer:sleep(10000),
-    [pong = net_adm:ping(Node) || Node <- node_names(?NUM_NODES)].
-
-stop_nodes() ->
-    teardown_nodes(?NUM_NODES).
-
-cleanup(_) ->
-    cleanup().
-
-cleanup() ->
-    {ok, _Nodes} = teardown_nodes(?NUM_NODES),
-    [os:cmd("rm -rf "++Dir) || Dir <- data_dirs()],
-    ok.
-
-setup_prop() ->
-    Nodes = node_names(?NUM_NODES),
     cleanup_riak_ensemble_on_all_nodes(),
-    setup_this_node(),
+    Nodes = node_names(),
+    [erl_port:start_link(Node) || Node <- Nodes],
+    wait_for_nodeups(Nodes),
     make_data_dirs(),
     _Output = start_riak_ensemble_on_all_nodes(),
-    %%io:format(user, "Started Output = ~p~n", [Output]),
+    wait_for_manager(Nodes),
     initial_join(Nodes),
     ok = create_root_ensemble(Nodes).
+
+cleanup(_) ->
+    ok.
+
+wait_for_manager([]) ->
+    ok;
+wait_for_manager([H | T]=Nodes) ->
+    case rpc:call(H, erlang, whereis, [riak_ensemble_manager], 5000) of
+        undefined ->
+            timer:sleep(100),
+            wait_for_manager(Nodes);
+        _ ->
+            wait_for_manager(T)
+    end.
+
+wait_for_nodeups([]) ->
+    ok;
+wait_for_nodeups([H | T]=Nodes) ->
+    case net_adm:ping(H) of
+        pong ->
+            wait_for_nodeups(T);
+        pang ->
+            timer:sleep(10),
+            wait_for_nodeups(Nodes)
+    end.
+
+wait_for_shutdown(Node) ->
+    case net_adm:ping(Node) of
+        pong ->
+            timer:sleep(100),
+            wait_for_shutdown(Node);
+        pang ->
+            ok
+    end.
 
 prop_ensemble() ->
     ?FORALL(Repetitions, ?SHRINK(1,[10]),
         ?FORALL(Cmds, more_commands(100, parallel_commands(?MODULE)),
             ?ALWAYS(Repetitions, begin
-                setup_prop(),
                 ParallelCmds = element(2, Cmds),
                 lager:info("number of parallel sequences= ~p",
                     [length(ParallelCmds)]),
-                case ParallelCmds of
-                    [] ->
-                        ok;
-                    _ ->
-                        lager:info("len(Cmds) in first parallel sequence= ~p",
-                                   [length(hd(element(2, Cmds)))])
-                end,
+                lager:info("Cmds in each parallel sequence= ~w",
+                    [[length(C) || C <- ParallelCmds]]),
+                lager:info("Parallel Cmds = ~p~n", [ParallelCmds]),
                 {_, _, Res} = Result = run_parallel_commands(?MODULE, Cmds),
                 aggregate(command_names(Cmds),
                     eqc_statem:pretty_commands(?MODULE, Cmds, Result,
@@ -96,19 +110,21 @@ initial_state() ->
 precondition(_State, _Call) ->
     true.
 
-command(_State) ->
-    frequency([{1, {call, ?MODULE, create_ensemble, [ensemble()]}},
-               {10, {call, riak_ensemble_client, kput_once,
+command(State) ->
+    frequency([{10, {call, ?MODULE, create_ensemble, [ensemble()]}},
+               {1, {call, ?MODULE, stop_node, [State]}},
+%%               {10, {call, ?MODULE, start_node, [State]}},
+               {100, {call, riak_ensemble_client, kput_once,
                        [ensemble(), key(), value(), ?REQ_TIMEOUT]}},
-               {10, {call, riak_ensemble_client, kget,
+               {100, {call, riak_ensemble_client, kget,
                        [ensemble(), key(), ?REQ_TIMEOUT]}},
-               {10, {call, riak_ensemble_client, kover,
+               {100, {call, riak_ensemble_client, kover,
                        [ensemble(), key(), value(), ?REQ_TIMEOUT]}},
-               {10, {call, riak_ensemble_client, kdelete,
+               {40, {call, riak_ensemble_client, kdelete,
                        [ensemble(), key(), ?REQ_TIMEOUT]}},
-               {10, {call, ?MODULE, ksafe_delete,
+               {30, {call, ?MODULE, ksafe_delete,
                        [ensemble(), key(), ?REQ_TIMEOUT]}},
-               {10, {call, ?MODULE, kupdate,
+               {100, {call, ?MODULE, kupdate,
                        [ensemble(), key(), value()]}}]).
 
 postcondition(State, {call, _, kget, [Ensemble, Key, _]},
@@ -143,6 +159,8 @@ postcondition(_State, {call, _, kdelete, [_Ensemble, _Key, _]},
 postcondition(_State, {call, _, kdelete, [_Ensemble, _Key, _]},
     {error, _}) ->
         true;
+postcondition(_State, {call, ?MODULE, stop_node, [_]}, ok) ->
+    true;
 postcondition(_State, {call, _, kover, _}, _) ->
     true.
 
@@ -175,6 +193,12 @@ next_state(State=#state{data=Data},
     Result, {call, _, kover, [Ensemble, Key, Val, _]}) ->
         State#state{data = {call, ?MODULE, maybe_put_data,
                 [Ensemble, Key, Val, Data, Result]}};
+
+next_state(State=#state{up_nodes=[]}, _Result, {call, _, stop_node, _}) ->
+    State;
+next_state(State=#state{up_nodes=[H | T], down_nodes=Down}, _Result,
+    {call, _, stop_node, [_]}) ->
+        State#state{up_nodes=T, down_nodes=[H | Down]};
 
 next_state(State=#state{data=Data}, Result,
     {call, _, kupdate, [Ensemble, Key, Val]}) ->
@@ -210,30 +234,32 @@ maybe_put_data(_, _, _, Data, _) ->
     Data.
 
 ksafe_delete(Ensemble, Key, Timeout) ->
-    case riak_ensemble_client:kget(Ensemble, Key, Timeout) of
+    Node1 = node_name(1),
+    case riak_ensemble_client:kget(Node1, Ensemble, Key, Timeout) of
         {ok, {obj, _, _, _, notfound}} ->
             {error, notfound};
         {ok, Obj} ->
-            riak_ensemble_client:ksafe_delete(Ensemble, Key, Obj, Timeout);
+            riak_ensemble_client:ksafe_delete(Node1, Ensemble, Key, Obj, Timeout);
         E ->
             E
     end.
 
 kupdate(Ensemble, Key, Val) ->
-    case riak_ensemble_client:kget(Ensemble, Key, ?REQ_TIMEOUT) of
+    Node1 = node_name(1),
+    case riak_ensemble_client:kget(Node1, Ensemble, Key, ?REQ_TIMEOUT) of
         {ok, {obj, _, _, _, notfound}} ->
             {error, notfound};
         {ok, CurrentObj} ->
-            riak_ensemble_client:kupdate(Ensemble, Key, CurrentObj, Val,
+            riak_ensemble_client:kupdate(Node1, Ensemble, Key, CurrentObj, Val,
                 ?REQ_TIMEOUT);
         E ->
            E
     end.
 
 create_ensemble(Ensemble) ->
-    Res =
-    riak_ensemble_manager:create_ensemble(Ensemble, {Ensemble++"_peer", node()},
-        members(Ensemble), riak_ensemble_basic_backend, []),
+    Res = rpc:call(node_name(1), riak_ensemble_manager, create_ensemble,
+        [Ensemble, {Ensemble++"_peer", node()}, members(Ensemble),
+            riak_ensemble_basic_backend, []]),
     wait_quorum(Ensemble),
     Res.
 
@@ -303,107 +329,84 @@ members(Ensemble) ->
     [{Ensemble ++ "_peer", node()} |
         [{Ensemble ++ "_peer", Node} || Node <- node_names()]].
 
-initial_join(Nodes) ->
-    Node1 = node(),
-    ok = riak_ensemble_manager:enable(),
-    [{root, Node1}] = riak_ensemble_manager:get_members(root),
+initial_join([Node1 | Rest]) ->
+    ok = rpc:call(Node1, riak_ensemble_manager, enable, []),
+    [{root, Node1}] =
+        rpc:call(Node1, riak_ensemble_manager, get_members, [root]),
     wait_quorum(root),
-    Output = [riak_ensemble_manager:join(Node1, Node) || Node <- Nodes],
+    Output = [rpc:call(Node1, riak_ensemble_manager, join, [Node1, Node])
+        || Node <- Rest],
     ?assertEqual([ok || _ <- lists:seq(2, ?NUM_NODES)], Output),
     wait_cluster().
 
 create_root_ensemble(Nodes) ->
-        Leader = riak_ensemble_manager:rleader_pid(),
+        Leader = rpc:call(hd(Nodes), riak_ensemble_manager, rleader_pid, []),
         Changes = [{add, {root, Node}} || Node <- Nodes],
         riak_ensemble_peer:update_members(Leader, Changes, 10000),
         wait_quorum(root).
 
-setup_this_node() ->
-    application:stop(riak_ensemble),
-    os:cmd("rm -rf "++data_dir(1)),
-    net_kernel:start([node_name(1)]),
-    erlang:set_cookie(node(), riak_ensemble_test),
-    application:set_env(riak_ensemble, data_root, data_dir(1)),
-    application:ensure_all_started(riak_ensemble).
-
 wait_quorum(Ensemble) ->
-    case riak_ensemble_manager:check_quorum(Ensemble, ?REQ_TIMEOUT) of
+    case rpc:call(node_name(1), riak_ensemble_manager, check_quorum,
+            [Ensemble, ?REQ_TIMEOUT]) of
         true ->
             ok;
         false ->
+            timer:sleep(10),
             wait_quorum(Ensemble)
     end.
 
 wait_cluster() ->
     try
-        case length(riak_ensemble_manager:cluster()) of
+        Cluster = rpc:call(node_name(1), riak_ensemble_manager, cluster, []),
+        case length(Cluster) of
             ?NUM_NODES ->
                 ok;
             _ ->
+                timer:sleep(10),
                 wait_cluster()
         end
     catch _:_ ->
+        timer:sleep(10),
         wait_cluster()
     end.
 
 cleanup_riak_ensemble_on_all_nodes() ->
-   [cleanup_riak_ensemble(Node, Path) ||
-       {Node, Path} <- lists:zip(node_names(?NUM_NODES), data_dirs())].
+   [cleanup_riak_ensemble(Path) || Path <- data_dirs()].
 
-cleanup_riak_ensemble(Node, Path) ->
-    rpc:call(Node, application, stop, [riak_ensemble]),
+cleanup_riak_ensemble(Path) ->
     os:cmd("rm -rf "++Path).
 
 start_riak_ensemble_on_all_nodes() ->
     [start_riak_ensemble(Node, Path)||
-        {Node, Path} <- lists:zip(node_names(?NUM_NODES), data_dirs())].
+        {Node, Path} <- lists:zip(node_names(), data_dirs())].
 
 start_riak_ensemble(Node, Path) ->
-    rpc:call(Node, application, set_env, [riak_ensemble, data_root, Path]),
-    rpc:call(Node, application, ensure_all_started, [riak_ensemble]).
+    rpc:call(Node, application, set_env, [riak_ensemble, data_root, Path], 5000),
+    rpc:call(Node, application, ensure_all_started, [riak_ensemble], 5000).
 
 data_dir(Num) ->
     "/tmp/dev" ++ integer_to_list(Num) ++ "_data".
 
 data_dirs() ->
     [data_dir(Num) ||
-        Num <- lists:seq(2, ?NUM_NODES)].
+        Num <- lists:seq(1, ?NUM_NODES)].
 
 make_data_dirs() ->
     [os:cmd("mkdir -p " ++ Path) || Path <- data_dirs()].
 
--spec launch_nodes(non_neg_integer()) -> {ok, [node()]} | {error, term()}.
-launch_nodes(NumNodes) when is_integer(NumNodes) ->
-    launch_nodes(node_names(NumNodes));
-launch_nodes(NodeNames) ->
-    FmtStr =
-        "run_erl -daemon ~p/ ~p \"erl -shutdown_time 10000 -pa ../.eunit -pa ../ebin -pa ../deps/*/ebin -setcookie riak_ensemble_test -name ~p\"",
-    _Output = lists:map(fun({NodeName, Dir}) ->
-                           Str = io_lib:format(FmtStr, [Dir, Dir, NodeName]),
-                           os:cmd(Str)
-                       end, lists:zip(NodeNames, data_dirs())),
-    %%io:format(user, "Output = ~p~n", [Output]),
-    {ok, NodeNames}.
-
-teardown_nodes(NumNodes) when is_integer(NumNodes) ->
-    teardown_nodes(node_names(NumNodes));
-teardown_nodes(NodeNames) ->
-    %% TODO: parse and handle output
-    _Output = [kill_node(Node) || Node <- NodeNames],
-    %%io:format("Output = ~p~n", [Output]),
-  {ok, NodeNames}.
-
-kill_node(Node) ->
-    rpc:call(Node, init, stop, []).
+stop_node(#state{up_nodes=[]}) ->
+    ok;
+stop_node(#state{up_nodes=[H | _]}) ->
+    stop_node(H);
+stop_node(Node) ->
+    rpc:call(Node, init, stop, [], 10000),
+    wait_for_shutdown(Node).
 
 node_names() ->
-    node_names(?NUM_NODES).
-
-node_names(NumNodes) ->
-    [node_name(Num) || Num <- lists:seq(2, NumNodes)].
-
-all_node_names() ->
     [node_name(Num) || Num <- lists:seq(1, ?NUM_NODES)].
+
+other_node_names() ->
+    [node_name(Num) || Num <- lists:seq(2, ?NUM_NODES)].
 
 node_name(Num) ->
     list_to_atom("dev" ++ integer_to_list(Num) ++ "@127.0.0.1").
