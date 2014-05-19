@@ -48,6 +48,7 @@ start_link() ->
 init([]) ->
     riak_ensemble_test:setup(),
     Children = [?CHILD(riak_ensemble_router_sup, supervisor),
+                ?CHILD(riak_ensemble_storage, worker),
                 ?CHILD(riak_ensemble_peer_sup, supervisor),
                 ?CHILD(riak_ensemble_manager, worker)],
     {ok, {{rest_for_one, 5, 10}, Children}}.
