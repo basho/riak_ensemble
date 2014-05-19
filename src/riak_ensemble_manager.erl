@@ -508,8 +508,8 @@ maybe_save_state(State=#state{cluster_state=NewCS}) ->
 -spec save_state(state()) -> ok | {error, term()}.
 save_state(#state{cluster_state=CS}) ->
     try
+        %% Note: not syncing here is an intentional performance decision
         true = riak_ensemble_storage:put(manager, CS),
-        %% ok = riak_ensemble_storage:sync(),
         ok
     catch
         _:Err ->
