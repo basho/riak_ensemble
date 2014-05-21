@@ -14,7 +14,7 @@
         output = "" :: string()}).
 
 start_link(Node) ->
-    gen_server:start_link(?MODULE, Node, []).
+    gen_server:start_link({local, Node}, ?MODULE, Node, []).
 
 get_output(Pid) ->
     gen_server:call(Pid, get_output).
@@ -34,8 +34,13 @@ handle_cast(open_port, State=#state{node=Node}) ->
     {noreply, State}.
 
 handle_info({_Port, {data, Data}}, State=#state{output=Output}) ->
+    lager:info("Received Port(~p) Data ~p", [_Port, Data]),
     NewState = State#state{output=Output ++ Data},
-    {noreply, NewState}.
+    {noreply, NewState};
+
+handle_info({'EXIT', Port, Reason}, State) ->
+    lager:info("Port ~p has exited with Reason ~p", [Port, Reason]),
+    {noreply, State}.
 
 terminate(_, _State) ->
     ok.

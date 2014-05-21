@@ -21,8 +21,8 @@
 
 -define(NUM_NODES, 5).
 -define(REQ_TIMEOUT, 1000).
--define(QC_TIMEOUT, 300).
--define(EUNIT_TIMEOUT, 1800).
+-define(QC_TIMEOUT, 600).
+-define(EUNIT_TIMEOUT, 2*?QC_TIMEOUT).
 
 -record(state, {ensembles=sets:new() :: set(),
                 data=dict:new() :: dict(),
@@ -41,10 +41,13 @@ setup() ->
     lager:start(),
     cleanup_riak_ensemble_on_all_nodes(),
     Nodes = node_names(),
-    [erl_port:start_link(Node) || Node <- Nodes],
-    wait_for_nodeups(Nodes),
+    wait_for_nodeups(Nodes).
+
+setup_prop() ->
+    Nodes = node_names(),
     make_data_dirs(),
     _Output = start_riak_ensemble_on_all_nodes(),
+    io:format(user, "setup_prop _OUTPUT = ~p~n", [_Output]),
     wait_for_manager(Nodes),
     initial_join(Nodes),
     ok = create_root_ensemble(Nodes).
@@ -57,46 +60,67 @@ wait_for_manager([]) ->
 wait_for_manager([H | T]=Nodes) ->
     case rpc:call(H, erlang, whereis, [riak_ensemble_manager], 5000) of
         undefined ->
+            io:format(user, "Wait for manager ~p~n", [Nodes]),
             timer:sleep(100),
             wait_for_manager(Nodes);
         _ ->
+            io:format(user, "Wait for manager ~p~n", [T]),
             wait_for_manager(T)
     end.
 
 wait_for_nodeups([]) ->
     ok;
-wait_for_nodeups([H | T]=Nodes) ->
-    case net_adm:ping(H) of
+wait_for_nodeups([H | T]) when is_atom(H) ->
+    wait_for_nodeups([{H, 0} | T]);
+wait_for_nodeups([{Node, Count} | T]) when Count > 100 ->
+    lager:info("Waited for Nodeup for ~p too long. Restarting.", [Node]),
+    Output = erl_port:start_link(Node),
+    lager:info("Nodeup output ~p~n", [Output]),
+    wait_for_nodeups([{Node, 0} | T]);
+wait_for_nodeups([{Node, Count} | T]) ->
+    case net_adm:ping(Node) of
         pong ->
+            lager:info("Wait_for_nodeups PONG ~p~n", [Node]),
             wait_for_nodeups(T);
         pang ->
+            lager:info("Wait_for_nodeups PANG ~p~n", [Node]),
             timer:sleep(10),
-            wait_for_nodeups(Nodes)
+            wait_for_nodeups([{Node, Count+1} | T])
     end.
 
 wait_for_shutdown(Node) ->
     case net_adm:ping(Node) of
         pong ->
+            io:format(user, "Wait for shutdown PONG ~p~n", [Node]),
             timer:sleep(100),
             wait_for_shutdown(Node);
         pang ->
+            io:format(user, "Wait for shutdown PANG ~p~n", [Node]),
+            timer:sleep(5000),
             ok
     end.
 
 prop_ensemble() ->
     ?FORALL(Repetitions, ?SHRINK(1,[10]),
-        ?FORALL(Cmds, more_commands(100, parallel_commands(?MODULE)),
+        ?FORALL(Cmds, more_commands(10, parallel_commands(?MODULE)),
             ?ALWAYS(Repetitions, begin
+
                 ParallelCmds = element(2, Cmds),
                 lager:info("number of parallel sequences= ~p",
                     [length(ParallelCmds)]),
                 lager:info("Cmds in each parallel sequence= ~w",
                     [[length(C) || C <- ParallelCmds]]),
                 lager:info("Parallel Cmds = ~p~n", [ParallelCmds]),
+
+                setup_prop(),
+
                 {_, _, Res} = Result = run_parallel_commands(?MODULE, Cmds),
                 aggregate(command_names(Cmds),
                     eqc_statem:pretty_commands(?MODULE, Cmds, Result,
                         begin
+                            cleanup_riak_ensemble_on_all_nodes(),
+                            Nodes = node_names(),
+                            wait_for_nodeups(Nodes),
                             Res =:= ok
                         end))
             end))).
@@ -196,6 +220,9 @@ next_state(State=#state{data=Data},
 
 next_state(State=#state{up_nodes=[]}, _Result, {call, _, stop_node, _}) ->
     State;
+next_state(State=#state{up_nodes=Up}, _, {call, _, stop_node, _})
+    when length(Up) > (?NUM_NODES-1)/2+2 ->
+        State;
 next_state(State=#state{up_nodes=[H | T], down_nodes=Down}, _Result,
     {call, _, stop_node, [_]}) ->
         State#state{up_nodes=T, down_nodes=[H | Down]};
@@ -258,8 +285,9 @@ kupdate(Ensemble, Key, Val) ->
 
 create_ensemble(Ensemble) ->
     Res = rpc:call(node_name(1), riak_ensemble_manager, create_ensemble,
-        [Ensemble, {Ensemble++"_peer", node()}, members(Ensemble),
+        [Ensemble, undefined, members(Ensemble),
             riak_ensemble_basic_backend, []]),
+    io:format(user, "Create Ensemble ~p, Res = ~p~n", [Ensemble, Res]),
     wait_quorum(Ensemble),
     Res.
 
@@ -307,10 +335,10 @@ partial_failure_write(Ensemble, Key, Val, Data) ->
 %% ==============================
 
 ensemble() ->
-    name("ensemble", 3).
+    name("ensemble", 2).
 
 key() ->
-    name("key", 10).
+    name("key", 2).
 
 name(Prefix, Max) ->
     oneof([Prefix ++ integer_to_list(I) ||
@@ -326,8 +354,7 @@ node_name() ->
 %% Internal Functions
 %% ==============================
 members(Ensemble) ->
-    [{Ensemble ++ "_peer", node()} |
-        [{Ensemble ++ "_peer", Node} || Node <- node_names()]].
+        [{Ensemble, Node} || Node <- node_names()].
 
 initial_join([Node1 | Rest]) ->
     ok = rpc:call(Node1, riak_ensemble_manager, enable, []),
@@ -351,6 +378,7 @@ wait_quorum(Ensemble) ->
         true ->
             ok;
         false ->
+            io:format(user, "Wait Quorum Ensemble = ~p~n", [Ensemble]),
             timer:sleep(10),
             wait_quorum(Ensemble)
     end.
@@ -361,19 +389,36 @@ wait_cluster() ->
         case length(Cluster) of
             ?NUM_NODES ->
                 ok;
-            _ ->
+            R ->
+                io:format(user, "Wait Cluster ~p~n", [Cluster]),
                 timer:sleep(10),
                 wait_cluster()
         end
-    catch _:_ ->
+    catch _:_=Z ->
+        io:format(user, "Wait Cluster: exception ~p~n", [Z]),
         timer:sleep(10),
         wait_cluster()
     end.
 
 cleanup_riak_ensemble_on_all_nodes() ->
-   [cleanup_riak_ensemble(Path) || Path <- data_dirs()].
+    [cleanup_riak_ensemble(Node, Path) ||
+        {Node, Path} <- lists:zip(node_names(), data_dirs())].
 
-cleanup_riak_ensemble(Path) ->
+cleanup_riak_ensemble(Node, Path) ->
+    case rpc:call(Node, application, stop, [riak_ensemble], 2000) of
+        {badrpc, _} ->
+            Status = erl_port:start_link(Node),
+            case Status of
+                {error,{already_started, Pid}} ->
+                    exit(Pid, kill),
+                    _Output = erl_port:start_link(Node),
+                    io:format(user, "badrpc output = ~p~n", [_Output]);
+                {ok, _} ->
+                    ok
+            end;
+        _ ->
+            ok
+    end,
     os:cmd("rm -rf "++Path).
 
 start_riak_ensemble_on_all_nodes() ->
@@ -395,6 +440,9 @@ make_data_dirs() ->
     [os:cmd("mkdir -p " ++ Path) || Path <- data_dirs()].
 
 stop_node(#state{up_nodes=[]}) ->
+    ok;
+stop_node(#state{up_nodes=Up}) when length(Up) > (?NUM_NODES-1)/2+2 ->
+    %% Don't stop too many nodes at once, or they will never sync
     ok;
 stop_node(#state{up_nodes=[H | _]}) ->
     stop_node(H);
