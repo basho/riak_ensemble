@@ -459,8 +459,15 @@ stop_node(Node) ->
     Out = rpc:call(Node, init, stop, [], 10000),
     lager:info("Stopped Node ~p with Output ~p~n", [Node, Out]),
     wait_for_shutdown(Node),
+    %% erl_port gen_servers are registered with Node names for simplicity
+    %% In case the erl process exits, but this pid doesn't, shut it down
     Pid = whereis(Node),
-    exit(Pid, kill).
+    case is_pid(Pid) of
+        true ->
+            exit(Pid, kill);
+        _ ->
+            ok
+    end.
 
 node_names() ->
     [node_name(Num) || Num <- lists:seq(1, ?NUM_NODES)].
