@@ -6,15 +6,15 @@
          code_change/3]).
 
 %% API
--export([start_link/1,
+-export([start/1,
          get_output/1]).
 
 -record(state, {
         node :: atom(),
         output = "" :: string()}).
 
-start_link(Node) ->
-    gen_server:start_link({local, Node}, ?MODULE, Node, []).
+start(Node) ->
+    gen_server:start({local, Node}, ?MODULE, Node, []).
 
 get_output(Pid) ->
     gen_server:call(Pid, get_output).
