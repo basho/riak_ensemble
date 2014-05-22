@@ -22,7 +22,7 @@
 -define(NUM_NODES, 5).
 -define(REQ_TIMEOUT, 5000).
 -define(QUORUM_TIMEOUT, 10000).
--define(QC_TIMEOUT, 600).
+-define(QC_TIMEOUT, 300).
 -define(EUNIT_TIMEOUT, 2*?QC_TIMEOUT).
 
 -record(state, {ensembles=sets:new() :: set(),
@@ -42,6 +42,7 @@ setup() ->
     cleanup_riak_ensemble_on_all_nodes().
 
 setup_prop() ->
+    cleanup_riak_ensemble_on_all_nodes(),
     Nodes = node_names(),
     make_data_dirs(),
     _Output = start_riak_ensemble_on_all_nodes(),
@@ -62,11 +63,9 @@ wait_for_manager([]) ->
 wait_for_manager([H | T]=Nodes) ->
     case rpc:call(H, erlang, whereis, [riak_ensemble_manager], 5000) of
         undefined ->
-            io:format(user, "Wait for manager ~p~n", [Nodes]),
             timer:sleep(100),
             wait_for_manager(Nodes);
         _ ->
-            io:format(user, "Wait for manager ~p~n", [T]),
             wait_for_manager(T)
     end.
 
@@ -96,7 +95,7 @@ wait_for_shutdown(Node) ->
     end.
 
 prop_ensemble() ->
-    ?FORALL(Repetitions, ?SHRINK(1,[10]),
+    ?FORALL(Repetitions, ?SHRINK(1,[3]),
         ?FORALL(Cmds, more_commands(100, parallel_commands(?MODULE)),
             ?ALWAYS(Repetitions, begin
 
@@ -105,18 +104,16 @@ prop_ensemble() ->
                     [length(ParallelCmds)]),
                 lager:info("Cmds in each parallel sequence= ~w",
                     [[length(C) || C <- ParallelCmds]]),
-                lager:info("Parallel Cmds = ~p~n", [ParallelCmds]),
 
                 setup_prop(),
 
-                {SeqH, ParH, Res} = Result = run_parallel_commands(?MODULE, Cmds),
-                lager:info("Sequential Commands = ~p~n", [SeqH]),
-                lager:info("Parallel Commands = ~p~n", [ParH]),
+                {_SeqH, _ParH, Res} = Result = run_parallel_commands(?MODULE, Cmds),
+                %%lager:info("Sequential Commands = ~p~n", [_SeqH]),
+                %%lager:info("Parallel Commands = ~p~n", [_ParH]),
 
                 aggregate(command_names(Cmds),
                     eqc_statem:pretty_commands(?MODULE, Cmds, Result,
                         begin
-                            cleanup_riak_ensemble_on_all_nodes(),
                             Res =:= ok
                         end))
             end))).
@@ -131,7 +128,7 @@ precondition(_State, _Call) ->
     true.
 
 command(_State) ->
-    frequency([{1, {call, ?MODULE, stop_node, [node_name()]}},
+    frequency([{10, {call, ?MODULE, stop_node, [node_name()]}},
 %%               {10, {call, ?MODULE, start_node, [State]}},
                {100, {call, riak_ensemble_client, kput_once,
                        [node_name(), ensemble(), key(), value(),
@@ -154,10 +151,15 @@ postcondition(State, {call, _, kget, [_, Ensemble, Key, _]},
 postcondition(#state{data=Data}, {call, _, kget, [_, Ensemble, Key, _]},
     {ok, {obj, _, _, _, Val}}) ->
         compare_val({Ensemble, Key}, Val, Data);
+postcondition(State, {call, _, kget, [Node, _, _, _]}, {error, timeout})->
+    is_valid_timeout(State, Node);
 postcondition(_, {call, _, kget, _}, _)->
     true;
 postcondition(_State, {call, _, kput_once, _}, _Res) ->
     true;
+postcondition(State, {call, _, kupdate, [Ensemble, Key, _Val]},
+    {error, notfound}) ->
+        is_missing(Ensemble, Key, State);
 postcondition(_State, {call, _, kupdate, _}, {error, _}) ->
     true;
 postcondition(_State, {call, _, kupdate, [_Ensemble, _Key, NewVal]},
@@ -182,6 +184,7 @@ postcondition(_State, {call, ?MODULE, stop_node, [_]}, _) ->
     true;
 postcondition(_State, {call, _, kover, _}, _) ->
     true.
+
 
 next_state(State=#state{data=Data}, Result,
     {call, riak_ensemble_client, kget, [_, Ensemble, Key, _]}) ->
@@ -273,13 +276,11 @@ create_ensemble(Ensemble) ->
         [Ensemble, undefined, members(Ensemble),
             riak_ensemble_basic_backend, []]),
     io:format(user, "Create Ensemble ~p, Res = ~p~n", [Ensemble, Res]),
-    case Res of
-        ok ->
-            wait_quorum(Ensemble);
-        _ ->
-            ok
-    end,
+    wait_quorum(Ensemble),
     Res.
+
+is_valid_timeout(#state{up_nodes=Up}, Node) ->
+    length(Up) < ?NUM_NODES div 2 + 1 orelse not lists:member(Node, Up).
 
 is_possible(Ensemble, Key, #state{data=Data}) ->
     case dict:find({Ensemble, Key}, Data) of
@@ -428,7 +429,7 @@ cleanup_riak_ensemble(Node, Path) ->
                 {error,{already_started, Pid}} ->
                     exit(Pid, normal),
                     _Output = erl_port:start(Node),
-                    io:format(user, "badrpc output = ~p~n", [_Output]);
+                    io:format(user, "cleanup_riak_ensemble output = ~p~n", [_Output]);
                 {ok, _} ->
                     ok
             end;
