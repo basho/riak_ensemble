@@ -129,7 +129,7 @@ precondition(_State, _Call) ->
 
 command(_State) ->
     frequency([{10, {call, ?MODULE, stop_node, [node_name()]}},
-%%               {10, {call, ?MODULE, start_node, [State]}},
+               {10, {call, erl_port, start, [node_name()]}},
                {100, {call, riak_ensemble_client, kput_once,
                        [node_name(), ensemble(), key(), value(),
                            ?REQ_TIMEOUT]}},
@@ -151,8 +151,6 @@ postcondition(State, {call, _, kget, [_, Ensemble, Key, _]},
 postcondition(#state{data=Data}, {call, _, kget, [_, Ensemble, Key, _]},
     {ok, {obj, _, _, _, Val}}) ->
         compare_val({Ensemble, Key}, Val, Data);
-postcondition(State, {call, _, kget, [Node, _, _, _]}, {error, timeout})->
-    is_valid_timeout(State, Node);
 postcondition(_, {call, _, kget, _}, _)->
     true;
 postcondition(_State, {call, _, kput_once, _}, _Res) ->
@@ -180,6 +178,12 @@ postcondition(_State, {call, _, kdelete, [_, _Ensemble, _Key, _]},
 postcondition(_State, {call, _, kdelete, [_, _Ensemble, _Key, _]},
     {error, _}) ->
         true;
+postcondition(#state{up_nodes=Up}, {call, erl_port, start, [Node]},
+    {error, {already_started,_}}) ->
+        lists:member(Node, Up);
+postcondition(#state{up_nodes=Up}, {call, erl_port, start, [Node]},
+    {ok, _}) ->
+        not lists:member(Node, Up);
 postcondition(_State, {call, ?MODULE, stop_node, [_]}, _) ->
     true;
 postcondition(_State, {call, _, kover, _}, _) ->
@@ -214,6 +218,11 @@ next_state(State=#state{data=Data},
 next_state(State=#state{up_nodes=Up}, _Result,
     {call, _, stop_node, [Node]}) ->
         State#state{up_nodes=lists:delete(Node, Up)};
+
+next_state(State=#state{up_nodes=Up}, _Result,
+    {call, erl_port, start, [Node]}) ->
+        NewUp = sets:to_list(sets:from_list([Node | Up])),
+        State#state{up_nodes=NewUp};
 
 next_state(State=#state{data=Data}, Result,
     {call, _, kupdate, [Ensemble, Key, Val]}) ->
@@ -278,9 +287,6 @@ create_ensemble(Ensemble) ->
     io:format(user, "Create Ensemble ~p, Res = ~p~n", [Ensemble, Res]),
     wait_quorum(Ensemble),
     Res.
-
-is_valid_timeout(#state{up_nodes=Up}, Node) ->
-    length(Up) < ?NUM_NODES div 2 + 1 orelse not lists:member(Node, Up).
 
 is_possible(Ensemble, Key, #state{data=Data}) ->
     case dict:find({Ensemble, Key}, Data) of
@@ -419,7 +425,6 @@ cleanup_riak_ensemble_on_all_nodes() ->
     [cleanup_riak_ensemble(Node, Path) ||
         {Node, Path} <- lists:zip(Nodes, data_dirs())],
     wait_for_nodeups(Nodes).
-
 
 cleanup_riak_ensemble(Node, Path) ->
     case rpc:call(Node, application, stop, [riak_ensemble], 2000) of
