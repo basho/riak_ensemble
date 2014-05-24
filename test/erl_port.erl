@@ -6,25 +6,20 @@
          code_change/3]).
 
 %% API
--export([start/1,
-         get_output/1]).
+-export([start/1]).
 
 -record(state, {
-        node :: atom(),
-        output = "" :: string()}).
+        node :: atom()}).
 
 start(Node) ->
     gen_server:start({local, Node}, ?MODULE, Node, []).
-
-get_output(Pid) ->
-    gen_server:call(Pid, get_output).
 
 init(Node) ->
     gen_server:cast(self(), open_port),
     {ok, #state{node=Node}}.
 
-handle_call(get_output, _, State) ->
-    {reply, State#state.output, State}.
+handle_call(_, _, State) ->
+    {reply, ok, State}.
 
 handle_cast(open_port, State=#state{node=Node}) ->
     Str =
@@ -33,10 +28,9 @@ handle_cast(open_port, State=#state{node=Node}) ->
     open_port({spawn, Str}, []),
     {noreply, State}.
 
-handle_info({_Port, {data, Data}}, State=#state{output=Output}) ->
+handle_info({_Port, {data, Data}}, State) ->
     lager:info("Received Port(~p) Data ~p", [_Port, Data]),
-    NewState = State#state{output=Output ++ Data},
-    {noreply, NewState};
+    {noreply, State};
 
 handle_info({'EXIT', Port, Reason}, State) ->
     lager:info("Port ~p has exited with Reason ~p", [Port, Reason]),

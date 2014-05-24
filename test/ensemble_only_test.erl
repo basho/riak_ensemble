@@ -23,6 +23,7 @@
 -define(REQ_TIMEOUT, 5000).
 -define(QUORUM_TIMEOUT, 10000).
 -define(QC_TIMEOUT, 300).
+-define(MORE_COMMANDS_FACTOR, 10).
 -define(EUNIT_TIMEOUT, 2*?QC_TIMEOUT).
 
 -record(state, {ensembles=sets:new() :: set(),
@@ -36,7 +37,10 @@ ensemble_test_() ->
                             prop_ensemble()))))}]}.
 
 setup() ->
-    net_kernel:start(['ensemble_tester@127.0.0.1']),
+    %% sometimes epmd not running, like on the builder or a freshly booted
+    %% machine. This command is safe, even if it is already running
+    os:cmd("epmd -daemon"),
+    {ok, _Pid} = net_kernel:start(['ensemble_tester@127.0.0.1']),
     erlang:set_cookie(node(), riak_ensemble_test),
     lager:start(),
     cleanup_riak_ensemble_on_all_nodes().
@@ -96,7 +100,8 @@ wait_for_shutdown(Node) ->
 
 prop_ensemble() ->
     ?FORALL(Repetitions, ?SHRINK(1,[3]),
-        ?FORALL(Cmds, more_commands(100, parallel_commands(?MODULE)),
+        ?FORALL(Cmds, more_commands(?MORE_COMMANDS_FACTOR,
+                                    parallel_commands(?MODULE)),
             ?ALWAYS(Repetitions, begin
 
                 ParallelCmds = element(2, Cmds),
@@ -242,13 +247,13 @@ maybe_delete(Ensemble, Key, {ok, _}, #state{data=Data}) ->
     dict:erase({Ensemble, Key}, Data).
 
 %% maybe_put_data/4 is only done on reads, so we don't change our
-%% state on partial failure since we aren't adding an actually new value
+%% state on failure since we aren't adding an actually new value
 maybe_put_data(_Ensemble, _Key, Data, {error, _}) ->
     Data;
-maybe_put_data(_, _, Data, {ok, {obj, _, _, _, notfound}}) ->
-    Data;
-maybe_put_data(Ensemble, Key, Data, {ok, {obj, _, _, _, Val}}=Res) ->
-    maybe_put_data(Ensemble, Key, Val, Data, Res).
+maybe_put_data(Ensemble, Key, Data, {ok, {obj, _, _, _, notfound}}) ->
+    dict:erase({Ensemble, Key}, Data);
+maybe_put_data(Ensemble, Key, Data, {ok, {obj, _, _, _, Val}}) ->
+    dict:store({Ensemble, Key}, Val, Data).
 
 maybe_put_data(Ensemble, Key, Val, Data, {ok, _}) ->
     dict:store({Ensemble, Key}, Val, Data);
@@ -432,7 +437,7 @@ cleanup_riak_ensemble(Node, Path) ->
             Status = erl_port:start(Node),
             case Status of
                 {error,{already_started, Pid}} ->
-                    exit(Pid, normal),
+                    exit(Pid, kill),
                     _Output = erl_port:start(Node),
                     io:format(user, "cleanup_riak_ensemble output = ~p~n", [_Output]);
                 {ok, _} ->
