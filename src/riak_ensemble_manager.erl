@@ -38,6 +38,7 @@
          gossip/1,
          gossip_pending/3,
          join/2,
+         remove/2,
          enabled/0,
          enable/0,
          create_ensemble/4,
@@ -66,7 +67,8 @@
 
 -type state() :: #state{}.
 
--type call_msg() :: {join, node()}.
+-type call_msg() :: {join, node()} |
+                    {remove, node()}.
 
 -type cast_msg() :: {update_ensembles, [{ensemble_id(), ensemble_info()}]} |
                     {update_root_ensemble, ensemble_info()}                |
@@ -89,6 +91,11 @@ join(Same, Same) ->
     {error, same_node};
 join(Node, OtherNode) ->
     typed_call(OtherNode, {join, Node}, infinity).
+
+remove(Same, Same) ->
+    {error, same_node};
+remove(Node, NodeToRemove) ->
+    typed_call(Node, {remove, NodeToRemove}, infinity).
 
 -spec enabled() -> boolean().
 enabled() ->
@@ -308,6 +315,11 @@ handle_call({join, Node}, _From, State=#state{cluster_state=LocalCS}) ->
         _ ->
             {reply, error, State}
     end;
+handle_call({remove, Node}, _From, State) ->
+    Reply = riak_ensemble_root:remove(Node),
+    State2 = state_changed(State),
+    {reply, Reply, State2};
+
 handle_call(get_cluster_state, _From, State=#state{cluster_state=CS}) ->
     {reply, {ok, CS}, State};
 
