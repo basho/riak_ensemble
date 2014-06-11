@@ -51,7 +51,7 @@ replace_file(FN, Data) ->
 
 %%===================================================================
 
-%% @doc Similar to {@link file:read_file} but uses raw file I/O
+%% @doc Similar to {@link file:read_file/1} but uses raw file I/O
 -spec read_file(file:filename()) -> {ok, binary()} | {error, _}.
 read_file(FName) ->
     case file:open(FName, [read, raw, binary]) of
