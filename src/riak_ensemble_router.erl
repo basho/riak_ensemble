@@ -169,7 +169,7 @@ routers() ->
      riak_ensemble_router_6,
      riak_ensemble_router_7}.
 
-%% @doc Generate "random" number X, such that 0 <= X < N.
+%% @doc Generate "random" number X, such that `0 <= X < N'.
 -spec random(pos_integer()) -> pos_integer().
 random(N) ->
     %% Note: hashing over I/O statistics seems to be fastest option when

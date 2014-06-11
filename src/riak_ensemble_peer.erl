@@ -1412,11 +1412,12 @@ get_latest_obj(Key, Local, State=#state{id=Id, members=Members}) ->
             {failed, State2}
     end.
 
+-spec put_obj(_,obj(),state()) -> {ok, obj(), state()} | {failed,state()}.
 put_obj(Key, Obj, State) ->
     Seq = obj_sequence(State),
     put_obj(Key, Obj, Seq, State).
 
--spec put_obj(_,obj(),state()) -> {ok, obj(), state()} | {failed,state()}.
+-spec put_obj(_,obj(),seq(),state()) -> {ok, obj(), state()} | {failed,state()}.
 put_obj(Key, Obj, Seq, State=#state{id=Id, members=Members, self=Self}) ->
     Epoch = epoch(State),
     Obj2 = increment_obj(Key, Obj, Seq, State),
