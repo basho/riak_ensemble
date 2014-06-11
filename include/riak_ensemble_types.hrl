@@ -12,6 +12,8 @@
 -type epoch() :: integer().
 -type seq() :: integer().
 -type vsn() :: {epoch(), seq()}.
+-type peer_info() :: nodedown | undefined | {any(), boolean(), epoch()}.
+
 -type orddict(Key,Val) :: [{Key, Val}].
 -type ordsets(Val) :: [Val].
 

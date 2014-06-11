@@ -33,6 +33,7 @@
          get_views/1,
          get_pending/1,
          get_leader/1,
+         get_peer_info/2,
          rleader_pid/0,
          update_ensemble/4,
          gossip/1,
@@ -116,6 +117,15 @@ get_leader_pid(Ensemble) ->
             undefined;
         Leader ->
             get_peer_pid(Ensemble, Leader)
+    end.
+
+-spec get_peer_info(ensemble_id(), peer_id()) -> nodedown | undefined | peer_info().
+get_peer_info(Ensemble, Peer={_, Node}) ->
+    try
+        gen_server:call({?MODULE, Node}, {peer_info, Ensemble, Peer}, 60000)
+    catch
+        exit:{{nodedown, _},_} ->
+            nodedown
     end.
 
 %%%===================================================================
@@ -334,6 +344,23 @@ handle_call({update_ensemble, Ensemble, Leader, Views, Vsn}, _From, State=#state
 handle_call({gossip, OtherCS}, _From, State) ->
     NewCS = merge_gossip(OtherCS, State),
     save_state_reply(NewCS, State);
+
+handle_call({peer_info, Ensemble, Peer}, From, State) ->
+    case get_peer_pid(Ensemble, Peer) of
+        undefined ->
+            {reply, undefined, State};
+        Pid ->
+            spawn_link(fun() ->
+                               try
+                                   Info = riak_ensemble_peer:get_info(Pid),
+                                   gen_server:reply(From, Info)
+                               catch
+                                   _:_ ->
+                                       gen_server:reply(From, undefined)
+                               end
+                       end),
+            {noreply, State}
+    end;
 
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
