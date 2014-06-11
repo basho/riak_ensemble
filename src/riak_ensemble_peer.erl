@@ -34,11 +34,11 @@
 -export([setup/2]).
 -export([probe/2, election/2, prepare/2, leading/2, following/2,
          probe/3, election/3, prepare/3, leading/3, following/3]).
--export([pending/2, sync/2, all_sync/2, check_sync/2, prelead/2, prefollow/2,
-         pending/3, sync/3, all_sync/3, check_sync/3, prelead/3, prefollow/3]).
+-export([sync/2, all_sync/2, check_sync/2, prelead/2, prefollow/2,
+         sync/3, all_sync/3, check_sync/3, prelead/3, prefollow/3]).
 
 %% Support/debug API
--export([count_quorum/2, check_quorum/2, force_state/2]).
+-export([count_quorum/2, check_quorum/2, force_state/2, is_pending/1]).
 
 %% Exported internal callback functions
 -export([do_kupdate/4, do_kput_once/4, do_kmodify/4]).
@@ -290,13 +290,8 @@ local_put(Pid, Key, Obj, Timeout) when is_pid(Pid) ->
 probe(init, State) ->
     ?OUT("~p: probe~n", [State#state.id]),
     State2 = set_leader(undefined, State),
-    case is_pending(State2) of
-        true ->
-            pending(init, State2);
-        false ->
-            State3 = send_all(probe, State2),
-            {next_state, probe, State3}
-    end;
+    State3 = send_all(probe, State2),
+    {next_state, probe, State3};
 probe({quorum_met, Replies}, State=#state{fact=Fact, abandoned=Abandoned}) ->
     Latest = latest_fact(Replies, Fact),
     Existing = existing_leader(Replies, Abandoned, Latest),
@@ -320,45 +315,6 @@ probe(Msg, State) ->
 -spec probe(_, fsm_from(), state()) -> {next_state, probe, state()}.
 probe(Msg, From, State) ->
     common(Msg, From, State, probe).
-
-pending(init, State) ->
-    State2 = set_timer(?ENSEMBLE_TICK * 10, pending_timeout, State),
-    %% TODO: Trusting pending peers makes ensemble vulnerable to concurrent
-    %%       node failures during membership changes. Change to move to
-    %%       syncing state before moving to following.
-    {next_state, pending, State2#state{trust=true}};
-pending(pending_timeout, State) ->
-    probe({timeout, []}, State);
-pending({prepare, Id, NextEpoch, From}, State=#state{fact=Fact}) ->
-    Epoch = epoch(State),
-    case NextEpoch > Epoch of
-        true ->
-            ?OUT("~p: accepting ~p from ~p (~p)~n",
-                 [State#state.id, NextEpoch, Id, Epoch]),
-            reply(From, Fact, State),
-            State2 = cancel_timer(State),
-            prefollow({init, Id, NextEpoch}, State2);
-        false ->
-            ?OUT("~p: rejecting ~p from ~p (~p)~n",
-                 [State#state.id, NextEpoch, Id, Epoch]),
-            {next_state, pending, State}
-    end;
-pending({commit, NewFact, From}, State) ->
-    Epoch = epoch(State),
-    case NewFact#fact.epoch >= Epoch of
-        true ->
-            reply(From, ok, State),
-            State2 = local_commit(NewFact, State),
-            State3 = cancel_timer(State2),
-            following(init, State3);
-        false ->
-            {next_state, pending, State}
-    end;
-pending(Msg, State) ->
-    common(Msg, State, pending).
-
-pending(Msg, From, State) ->
-    common(Msg, From, State, pending).
 
 maybe_follow(_, State=#state{trust=false}) ->
     %% This peer is untrusted and must sync
