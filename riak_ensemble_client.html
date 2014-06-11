@@ -1,0 +1,107 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1">
+<title>Module riak_ensemble_client</title>
+<link rel="stylesheet" type="text/css" href="stylesheet.css" title="EDoc">
+</head>
+<body bgcolor="white">
+<div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<hr>
+
+<h1>Module riak_ensemble_client</h1>
+<ul class="index"><li><a href="#types">Data Types</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>
+
+
+<h2><a name="types">Data Types</a></h2>
+
+<h3 class="typedecl"><a name="type-client_reply">client_reply()</a></h3>
+<p><tt>client_reply() = {ok, <a href="#type-obj">obj()</a>} | {error, failed | timeout | unavailable}</tt></p>
+
+
+<h3 class="typedecl"><a name="type-obj">obj()</a></h3>
+<p><tt>obj() = any()</tt></p>
+
+
+<h2><a name="index">Function Index</a></h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#kdelete-3">kdelete/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#kdelete-4">kdelete/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#kget-3">kget/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#kget-4">kget/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#kover-4">kover/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#kover-5">kover/5</a></td><td></td></tr>
+<tr><td valign="top"><a href="#kput_once-4">kput_once/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#kput_once-5">kput_once/5</a></td><td></td></tr>
+<tr><td valign="top"><a href="#ksafe_delete-4">ksafe_delete/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#ksafe_delete-5">ksafe_delete/5</a></td><td></td></tr>
+<tr><td valign="top"><a href="#kupdate-5">kupdate/5</a></td><td></td></tr>
+<tr><td valign="top"><a href="#kupdate-6">kupdate/6</a></td><td></td></tr>
+</table>
+
+<h2><a name="functions">Function Details</a></h2>
+
+<h3 class="function"><a name="kdelete-3">kdelete/3</a></h3>
+<div class="spec">
+<p><tt>kdelete(Ensemble::term(), Key::term(), Timeout::timeout()) -&gt; <a href="#type-client_reply">client_reply()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="kdelete-4">kdelete/4</a></h3>
+<div class="spec">
+<p><tt>kdelete(Node::node(), Ensemble::term(), Key::term(), Timeout::timeout()) -&gt; <a href="#type-client_reply">client_reply()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="kget-3">kget/3</a></h3>
+<div class="spec">
+<p><tt>kget(Ensemble::term(), Key::term(), Timeout::timeout()) -&gt; <a href="#type-client_reply">client_reply()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="kget-4">kget/4</a></h3>
+<div class="spec">
+<p><tt>kget(Node::node(), Ensemble::term(), Key::term(), Timeout::timeout()) -&gt; <a href="#type-client_reply">client_reply()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="kover-4">kover/4</a></h3>
+<div class="spec">
+<p><tt>kover(Ensemble::term(), Key::term(), NewObj::term(), Timeout::timeout()) -&gt; <a href="#type-client_reply">client_reply()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="kover-5">kover/5</a></h3>
+<div class="spec">
+<p><tt>kover(Node::node(), Ensemble::term(), Key::term(), NewObj::term(), Timeout::timeout()) -&gt; <a href="#type-client_reply">client_reply()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="kput_once-4">kput_once/4</a></h3>
+<div class="spec">
+<p><tt>kput_once(Ensemble::term(), Key::term(), NewObj::term(), Timeout::timeout()) -&gt; <a href="#type-client_reply">client_reply()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="kput_once-5">kput_once/5</a></h3>
+<div class="spec">
+<p><tt>kput_once(Node::node(), Ensemble::term(), Key::term(), NewObj::term(), Timeout::timeout()) -&gt; <a href="#type-client_reply">client_reply()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="ksafe_delete-4">ksafe_delete/4</a></h3>
+<div class="spec">
+<p><tt>ksafe_delete(Ensemble::term(), Key::term(), Obj::term(), Timeout::timeout()) -&gt; <a href="#type-client_reply">client_reply()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="ksafe_delete-5">ksafe_delete/5</a></h3>
+<div class="spec">
+<p><tt>ksafe_delete(Node::node(), Ensemble::term(), Key::term(), Obj::term(), Timeout::timeout()) -&gt; <a href="#type-client_reply">client_reply()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="kupdate-5">kupdate/5</a></h3>
+<div class="spec">
+<p><tt>kupdate(Ensemble::term(), Key::term(), Obj::term(), NewObj::term(), Timeout::timeout()) -&gt; <a href="#type-client_reply">client_reply()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="kupdate-6">kupdate/6</a></h3>
+<div class="spec">
+<p><tt>kupdate(Node::node(), Ensemble::term(), Key::term(), Obj::term(), NewObj::term(), Timeout::timeout()) -&gt; <a href="#type-client_reply">client_reply()</a></tt><br></p>
+</div>
+<hr>
+
+<div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<p><i>Generated by EDoc, Jun 11 2014, 15:43:21.</i></p>
+</body>
+</html>

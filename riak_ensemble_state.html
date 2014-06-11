@@ -1,0 +1,123 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1">
+<title>Module riak_ensemble_state</title>
+<link rel="stylesheet" type="text/css" href="stylesheet.css" title="EDoc">
+</head>
+<body bgcolor="white">
+<div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<hr>
+
+<h1>Module riak_ensemble_state</h1>
+<ul class="index"><li><a href="#types">Data Types</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>
+
+
+<h2><a name="types">Data Types</a></h2>
+
+<h3 class="typedecl"><a name="type-ensembles">ensembles()</a></h3>
+<p><tt>ensembles() = <a href="#type-orddict">orddict</a>(<a href="#type-ensemble_id">ensemble_id()</a>, <a href="#type-ensemble_info">ensemble_info()</a>)</tt></p>
+
+
+<h3 class="typedecl"><a name="type-pending">pending()</a></h3>
+<p><tt>pending() = <a href="#type-orddict">orddict</a>(<a href="#type-ensemble_id">ensemble_id()</a>, {<a href="#type-vsn">vsn()</a>, <a href="#type-views">views()</a>})</tt></p>
+
+
+<h3 class="typedecl"><a name="type-state">state()</a></h3>
+<p><tt>state() = #cluster_state{}</tt></p>
+
+
+<h2><a name="index">Function Index</a></h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#add_member-3">add_member/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#del_member-3">del_member/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#enable-1">enable/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#enabled-1">enabled/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#ensembles-1">ensembles/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#id-1">id/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#is_state-1">is_state/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#members-1">members/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#merge-2">merge/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#new-1">new/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#pending-1">pending/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#set_ensemble-3">set_ensemble/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#set_pending-4">set_pending/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#update_ensemble-5">update_ensemble/5</a></td><td></td></tr>
+</table>
+
+<h2><a name="functions">Function Details</a></h2>
+
+<h3 class="function"><a name="add_member-3">add_member/3</a></h3>
+<div class="spec">
+<p><tt>add_member(Vsn::<a href="#type-vsn">vsn()</a>, Node::node(), State::<a href="#type-state">state()</a>) -&gt; {ok, <a href="#type-state">state()</a>} | error</tt><br></p>
+</div>
+
+<h3 class="function"><a name="del_member-3">del_member/3</a></h3>
+<div class="spec">
+<p><tt>del_member(Vsn::<a href="#type-vsn">vsn()</a>, Node::node(), State::<a href="#type-state">state()</a>) -&gt; {ok, <a href="#type-state">state()</a>} | error</tt><br></p>
+</div>
+
+<h3 class="function"><a name="enable-1">enable/1</a></h3>
+<div class="spec">
+<p><tt>enable(State::<a href="#type-state">state()</a>) -&gt; {ok, <a href="#type-state">state()</a>} | error</tt><br></p>
+</div>
+
+<h3 class="function"><a name="enabled-1">enabled/1</a></h3>
+<div class="spec">
+<p><tt>enabled(Cluster_state::<a href="#type-state">state()</a>) -&gt; boolean()</tt><br></p>
+</div>
+
+<h3 class="function"><a name="ensembles-1">ensembles/1</a></h3>
+<div class="spec">
+<p><tt>ensembles(Cluster_state::<a href="#type-state">state()</a>) -&gt; <a href="#type-ensembles">ensembles()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="id-1">id/1</a></h3>
+<div class="spec">
+<p><tt>id(Cluster_state::<a href="#type-state">state()</a>) -&gt; term()</tt><br></p>
+</div>
+
+<h3 class="function"><a name="is_state-1">is_state/1</a></h3>
+<div class="spec">
+<p><tt>is_state(Cluster_state::term()) -&gt; boolean()</tt><br></p>
+</div>
+
+<h3 class="function"><a name="members-1">members/1</a></h3>
+<div class="spec">
+<p><tt>members(Cluster_state::<a href="#type-state">state()</a>) -&gt; <a href="#type-ordsets">ordsets</a>(node())</tt><br></p>
+</div>
+
+<h3 class="function"><a name="merge-2">merge/2</a></h3>
+<div class="spec">
+<p><tt>merge(A::<a href="#type-state">state()</a>, B::<a href="#type-state">state()</a>) -&gt; <a href="#type-state">state()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="new-1">new/1</a></h3>
+<div class="spec">
+<p><tt>new(Id::term()) -&gt; <a href="#type-state">state()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="pending-1">pending/1</a></h3>
+<div class="spec">
+<p><tt>pending(Cluster_state::<a href="#type-state">state()</a>) -&gt; <a href="#type-pending">pending()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="set_ensemble-3">set_ensemble/3</a></h3>
+<div class="spec">
+<p><tt>set_ensemble(Ensemble::<a href="#type-ensemble_id">ensemble_id()</a>, Info::<a href="#type-ensemble_info">ensemble_info()</a>, State::<a href="#type-state">state()</a>) -&gt; {ok, <a href="#type-state">state()</a>} | error</tt><br></p>
+</div>
+
+<h3 class="function"><a name="set_pending-4">set_pending/4</a></h3>
+<div class="spec">
+<p><tt>set_pending(Vsn::<a href="#type-vsn">vsn()</a>, Ensemble::<a href="#type-ensemble_id">ensemble_id()</a>, Views::<a href="#type-views">views()</a>, State::<a href="#type-state">state()</a>) -&gt; {ok, <a href="#type-state">state()</a>} | error</tt><br></p>
+</div>
+
+<h3 class="function"><a name="update_ensemble-5">update_ensemble/5</a></h3>
+<div class="spec">
+<p><tt>update_ensemble(Vsn::<a href="#type-vsn">vsn()</a>, Ensemble::<a href="#type-ensemble_id">ensemble_id()</a>, Leader::<a href="#type-peer_id">peer_id()</a>, Views::<a href="#type-views">views()</a>, State::<a href="#type-state">state()</a>) -&gt; {ok, <a href="#type-state">state()</a>} | error</tt><br></p>
+</div>
+<hr>
+
+<div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<p><i>Generated by EDoc, Jun 11 2014, 15:43:21.</i></p>
+</body>
+</html>

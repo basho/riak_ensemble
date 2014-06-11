@@ -1,0 +1,209 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1">
+<title>Module riak_ensemble_manager</title>
+<link rel="stylesheet" type="text/css" href="stylesheet.css" title="EDoc">
+</head>
+<body bgcolor="white">
+<div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<hr>
+
+<h1>Module riak_ensemble_manager</h1>
+<ul class="index"><li><a href="#types">Data Types</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>
+
+
+<h2><a name="types">Data Types</a></h2>
+
+<h3 class="typedecl"><a name="type-cluster_state">cluster_state()</a></h3>
+<p><tt>cluster_state() = <a href="riak_ensemble_state.html#type-state">riak_ensemble_state:state()</a></tt></p>
+
+
+<h3 class="typedecl"><a name="type-state">state()</a></h3>
+<p><tt>state() = #state{}</tt></p>
+
+
+<h2><a name="index">Function Index</a></h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#check_quorum-2">check_quorum/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#cluster-0">cluster/0</a></td><td></td></tr>
+<tr><td valign="top"><a href="#code_change-3">code_change/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#count_quorum-2">count_quorum/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#create_ensemble-4">create_ensemble/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#create_ensemble-5">create_ensemble/5</a></td><td></td></tr>
+<tr><td valign="top"><a href="#enable-0">enable/0</a></td><td></td></tr>
+<tr><td valign="top"><a href="#enabled-0">enabled/0</a></td><td></td></tr>
+<tr><td valign="top"><a href="#get_cluster_state-0">get_cluster_state/0</a></td><td></td></tr>
+<tr><td valign="top"><a href="#get_leader-1">get_leader/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#get_leader_pid-1">get_leader_pid/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#get_members-1">get_members/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#get_peer_pid-2">get_peer_pid/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#get_pending-1">get_pending/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#get_views-1">get_views/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#gossip-1">gossip/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#gossip_pending-3">gossip_pending/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#handle_call-3">handle_call/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#handle_cast-2">handle_cast/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#handle_info-2">handle_info/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#init-1">init/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#join-2">join/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#known_ensembles-0">known_ensembles/0</a></td><td></td></tr>
+<tr><td valign="top"><a href="#remove-2">remove/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#rleader_pid-0">rleader_pid/0</a></td><td></td></tr>
+<tr><td valign="top"><a href="#start-0">start/0</a></td><td></td></tr>
+<tr><td valign="top"><a href="#start_link-0">start_link/0</a></td><td></td></tr>
+<tr><td valign="top"><a href="#terminate-2">terminate/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#update_ensemble-4">update_ensemble/4</a></td><td></td></tr>
+</table>
+
+<h2><a name="functions">Function Details</a></h2>
+
+<h3 class="function"><a name="check_quorum-2">check_quorum/2</a></h3>
+<div class="spec">
+<p><tt>check_quorum(Ensemble::<a href="#type-ensemble_id">ensemble_id()</a>, Timeout::timeout()) -&gt; boolean()</tt><br></p>
+</div>
+
+<h3 class="function"><a name="cluster-0">cluster/0</a></h3>
+<div class="spec">
+<p><tt>cluster() -&gt; [node()]</tt><br></p>
+</div>
+
+<h3 class="function"><a name="code_change-3">code_change/3</a></h3>
+<div class="spec">
+<p><tt>code_change(OldVsn, State, Extra) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="count_quorum-2">count_quorum/2</a></h3>
+<div class="spec">
+<p><tt>count_quorum(Ensemble::<a href="#type-ensemble_id">ensemble_id()</a>, Timeout::timeout()) -&gt; integer()</tt><br></p>
+</div>
+
+<h3 class="function"><a name="create_ensemble-4">create_ensemble/4</a></h3>
+<div class="spec">
+<p><tt>create_ensemble(EnsembleId::<a href="#type-ensemble_id">ensemble_id()</a>, PeerId::<a href="#type-peer_id">peer_id()</a>, Mod::module(), Args::[any()]) -&gt; ok | {error, term()}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="create_ensemble-5">create_ensemble/5</a></h3>
+<div class="spec">
+<p><tt>create_ensemble(EnsembleId::<a href="#type-ensemble_id">ensemble_id()</a>, EnsLeader::<a href="#type-leader_id">leader_id()</a>, Members::[<a href="#type-peer_id">peer_id()</a>], Mod::module(), Args::[any()]) -&gt; ok | {error, term()}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="enable-0">enable/0</a></h3>
+<div class="spec">
+<p><tt>enable() -&gt; ok | error</tt><br></p>
+</div>
+
+<h3 class="function"><a name="enabled-0">enabled/0</a></h3>
+<div class="spec">
+<p><tt>enabled() -&gt; boolean()</tt><br></p>
+</div>
+
+<h3 class="function"><a name="get_cluster_state-0">get_cluster_state/0</a></h3>
+<div class="spec">
+<p><tt>get_cluster_state() -&gt; <a href="#type-cluster_state">cluster_state()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="get_leader-1">get_leader/1</a></h3>
+<div class="spec">
+<p><tt>get_leader(EnsembleId::<a href="#type-ensemble_id">ensemble_id()</a>) -&gt; <a href="#type-leader_id">leader_id()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="get_leader_pid-1">get_leader_pid/1</a></h3>
+<div class="spec">
+<p><tt>get_leader_pid(Ensemble::<a href="#type-ensemble_id">ensemble_id()</a>) -&gt; undefined | pid()</tt><br></p>
+</div>
+
+<h3 class="function"><a name="get_members-1">get_members/1</a></h3>
+<div class="spec">
+<p><tt>get_members(EnsembleId::<a href="#type-ensemble_id">ensemble_id()</a>) -&gt; [<a href="#type-peer_id">peer_id()</a>]</tt><br></p>
+</div>
+
+<h3 class="function"><a name="get_peer_pid-2">get_peer_pid/2</a></h3>
+<div class="spec">
+<p><tt>get_peer_pid(Ensemble::<a href="#type-ensemble_id">ensemble_id()</a>, PeerId::<a href="#type-peer_id">peer_id()</a>) -&gt; pid() | undefined</tt><br></p>
+</div>
+
+<h3 class="function"><a name="get_pending-1">get_pending/1</a></h3>
+<div class="spec">
+<p><tt>get_pending(EnsembleId::<a href="#type-ensemble_id">ensemble_id()</a>) -&gt; {<a href="#type-vsn">vsn()</a>, [[<a href="#type-peer_id">peer_id()</a>]]} | undefined</tt><br></p>
+</div>
+
+<h3 class="function"><a name="get_views-1">get_views/1</a></h3>
+<div class="spec">
+<p><tt>get_views(EnsembleId::<a href="#type-ensemble_id">ensemble_id()</a>) -&gt; {<a href="#type-vsn">vsn()</a>, <a href="#type-views">views()</a>}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="gossip-1">gossip/1</a></h3>
+<div class="spec">
+<p><tt>gossip(CS) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="gossip_pending-3">gossip_pending/3</a></h3>
+<div class="spec">
+<p><tt>gossip_pending(Ensemble, Vsn, Views) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="handle_call-3">handle_call/3</a></h3>
+<div class="spec">
+<p><tt>handle_call(Request, From, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="handle_cast-2">handle_cast/2</a></h3>
+<div class="spec">
+<p><tt>handle_cast(Msg, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="handle_info-2">handle_info/2</a></h3>
+<div class="spec">
+<p><tt>handle_info(Info, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="init-1">init/1</a></h3>
+<div class="spec">
+<p><tt>init(X1::[]) -&gt; {ok, <a href="#type-state">state()</a>}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="join-2">join/2</a></h3>
+<div class="spec">
+<p><tt>join(Same, OtherNode) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="known_ensembles-0">known_ensembles/0</a></h3>
+<div class="spec">
+<p><tt>known_ensembles() -&gt; undefined | {ok, <a href="#type-orddict">orddict</a>(<a href="#type-ensemble_id">ensemble_id()</a>, <a href="#type-ensemble_info">ensemble_info()</a>)}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="remove-2">remove/2</a></h3>
+<div class="spec">
+<p><tt>remove(Same, NodeToRemove) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="rleader_pid-0">rleader_pid/0</a></h3>
+<div class="spec">
+<p><tt>rleader_pid() -&gt; pid() | undefined</tt><br></p>
+</div>
+
+<h3 class="function"><a name="start-0">start/0</a></h3>
+<div class="spec">
+<p><tt>start() -&gt; ignore | {error, term()} | {ok, pid()}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="start_link-0">start_link/0</a></h3>
+<div class="spec">
+<p><tt>start_link() -&gt; ignore | {error, term()} | {ok, pid()}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="terminate-2">terminate/2</a></h3>
+<div class="spec">
+<p><tt>terminate(Reason, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="update_ensemble-4">update_ensemble/4</a></h3>
+<div class="spec">
+<p><tt>update_ensemble(Ensemble::<a href="#type-ensemble_id">ensemble_id()</a>, Leader::<a href="#type-peer_id">peer_id()</a>, Views::<a href="#type-views">views()</a>, Vsn::<a href="#type-vsn">vsn()</a>) -&gt; ok</tt><br></p>
+</div>
+<hr>
+
+<div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<p><i>Generated by EDoc, Jun 11 2014, 15:43:21.</i></p>
+</body>
+</html>

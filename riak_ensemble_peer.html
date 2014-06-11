@@ -1,0 +1,378 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1">
+<title>Module riak_ensemble_peer</title>
+<link rel="stylesheet" type="text/css" href="stylesheet.css" title="EDoc">
+</head>
+<body bgcolor="white">
+<div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<hr>
+
+<h1>Module riak_ensemble_peer</h1>
+<ul class="index"><li><a href="#types">Data Types</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>
+
+<p><b>Behaviours:</b> <a href="gen_fsm.html"><tt>gen_fsm</tt></a>.</p>
+
+<h2><a name="types">Data Types</a></h2>
+
+<h3 class="typedecl"><a name="type-fsm_from">fsm_from()</a></h3>
+<p><tt>fsm_from() = {term(), term()}</tt></p>
+
+
+<h3 class="typedecl"><a name="type-key">key()</a></h3>
+<p><tt>key() = any()</tt></p>
+
+
+<h3 class="typedecl"><a name="type-modify_fun">modify_fun()</a></h3>
+<p><tt>modify_fun() = function() | {module(), atom(), term()}</tt></p>
+
+
+<h3 class="typedecl"><a name="type-next_state">next_state()</a></h3>
+<p><tt>next_state() = {next_state, atom(), <a href="#type-state">state()</a>} | {stop, normal, <a href="#type-state">state()</a>}</tt></p>
+
+
+<h3 class="typedecl"><a name="type-obj">obj()</a></h3>
+<p><tt>obj() = any()</tt></p>
+
+
+<h3 class="typedecl"><a name="type-state">state()</a></h3>
+<p><tt>state() = #state{}</tt></p>
+
+
+<h3 class="typedecl"><a name="type-sync_next_state">sync_next_state()</a></h3>
+<p><tt>sync_next_state() = {reply, term(), atom(), <a href="#type-state">state()</a>} | {next_state, atom(), <a href="#type-state">state()</a>} | {stop, normal, <a href="#type-state">state()</a>}</tt></p>
+
+
+<h3 class="typedecl"><a name="type-target">target()</a></h3>
+<p><tt>target() = pid() | <a href="#type-ensemble_id">ensemble_id()</a></tt></p>
+
+
+<h2><a name="index">Function Index</a></h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#all_sync-2">all_sync/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#all_sync-3">all_sync/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#backend_pong-1">backend_pong/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#check_quorum-2">check_quorum/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#check_sync-2">check_sync/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#check_sync-3">check_sync/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#code_change-4">code_change/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#count_quorum-2">count_quorum/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#do_kmodify-4">do_kmodify/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#do_kput_once-4">do_kput_once/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#do_kupdate-4">do_kupdate/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#election-2">election/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#election-3">election/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#following-2">following/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#following-3">following/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#force_state-2">force_state/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#get_leader-1">get_leader/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#handle_event-3">handle_event/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#handle_info-3">handle_info/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#handle_sync_event-4">handle_sync_event/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#init-1">init/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#join-2">join/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#join-3">join/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#kdelete-4">kdelete/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#kget-4">kget/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#kmodify-6">kmodify/6</a></td><td></td></tr>
+<tr><td valign="top"><a href="#kover-5">kover/5</a></td><td></td></tr>
+<tr><td valign="top"><a href="#kput_once-5">kput_once/5</a></td><td></td></tr>
+<tr><td valign="top"><a href="#ksafe_delete-5">ksafe_delete/5</a></td><td></td></tr>
+<tr><td valign="top"><a href="#kupdate-6">kupdate/6</a></td><td></td></tr>
+<tr><td valign="top"><a href="#leading-2">leading/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#leading-3">leading/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#obj_value-2">obj_value/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#obj_value-3">obj_value/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#pending-2">pending/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#pending-3">pending/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#prefollow-2">prefollow/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#prefollow-3">prefollow/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#prelead-2">prelead/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#prelead-3">prelead/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#prepare-2">prepare/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#prepare-3">prepare/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#probe-2">probe/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#probe-3">probe/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#setup-2">setup/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#start-4">start/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#start_link-4">start_link/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#sync-2">sync/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#sync-3">sync/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#sync_complete-2">sync_complete/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#sync_failed-1">sync_failed/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#terminate-3">terminate/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#update_members-3">update_members/3</a></td><td></td></tr>
+</table>
+
+<h2><a name="functions">Function Details</a></h2>
+
+<h3 class="function"><a name="all_sync-2">all_sync/2</a></h3>
+<div class="spec">
+<p><tt>all_sync(Msg, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="all_sync-3">all_sync/3</a></h3>
+<div class="spec">
+<p><tt>all_sync(Msg, From, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="backend_pong-1">backend_pong/1</a></h3>
+<div class="spec">
+<p><tt>backend_pong(Pid) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="check_quorum-2">check_quorum/2</a></h3>
+<div class="spec">
+<p><tt>check_quorum(Ensemble::<a href="#type-ensemble_id">ensemble_id()</a>, Timeout::timeout()) -&gt; ok | timeout</tt><br></p>
+</div>
+
+<h3 class="function"><a name="check_sync-2">check_sync/2</a></h3>
+<div class="spec">
+<p><tt>check_sync(Msg, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="check_sync-3">check_sync/3</a></h3>
+<div class="spec">
+<p><tt>check_sync(Msg, From, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="code_change-4">code_change/4</a></h3>
+<div class="spec">
+<p><tt>code_change(OldVsn::term(), StateName::atom(), State::<a href="#type-state">state()</a>, Extra::term()) -&gt; {ok, atom(), <a href="#type-state">state()</a>}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="count_quorum-2">count_quorum/2</a></h3>
+<div class="spec">
+<p><tt>count_quorum(Ensemble::<a href="#type-ensemble_id">ensemble_id()</a>, Timeout::timeout()) -&gt; integer() | timeout</tt><br></p>
+</div>
+
+<h3 class="function"><a name="do_kmodify-4">do_kmodify/4</a></h3>
+<div class="spec">
+<p><tt>do_kmodify(Obj, NextSeq, State, X4) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="do_kput_once-4">do_kput_once/4</a></h3>
+<div class="spec">
+<p><tt>do_kput_once(Obj, NextSeq, State, X4) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="do_kupdate-4">do_kupdate/4</a></h3>
+<div class="spec">
+<p><tt>do_kupdate(Obj, NextSeq, State, X4) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="election-2">election/2</a></h3>
+<div class="spec">
+<p><tt>election(Msg::term(), State::<a href="#type-state">state()</a>) -&gt; <a href="#type-next_state">next_state()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="election-3">election/3</a></h3>
+<div class="spec">
+<p><tt>election(Msg::term(), From::<a href="#type-fsm_from">fsm_from()</a>, State::<a href="#type-state">state()</a>) -&gt; {next_state, election, <a href="#type-state">state()</a>}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="following-2">following/2</a></h3>
+<div class="spec">
+<p><tt>following(Msg::term(), State::<a href="#type-state">state()</a>) -&gt; <a href="#type-next_state">next_state()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="following-3">following/3</a></h3>
+<div class="spec">
+<p><tt>following(Msg::term(), From::<a href="#type-fsm_from">fsm_from()</a>, State::<a href="#type-state">state()</a>) -&gt; {next_state, following, <a href="#type-state">state()</a>}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="force_state-2">force_state/2</a></h3>
+<div class="spec">
+<p><tt>force_state(Pid, EpochSeq) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="get_leader-1">get_leader/1</a></h3>
+<div class="spec">
+<p><tt>get_leader(Pid::pid()) -&gt; <a href="#type-peer_id">peer_id()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="handle_event-3">handle_event/3</a></h3>
+<div class="spec">
+<p><tt>handle_event(Event::term(), StateName::atom(), State::<a href="#type-state">state()</a>) -&gt; {next_state, atom(), <a href="#type-state">state()</a>}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="handle_info-3">handle_info/3</a></h3>
+<div class="spec">
+<p><tt>handle_info(Info, StateName, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="handle_sync_event-4">handle_sync_event/4</a></h3>
+<div class="spec">
+<p><tt>handle_sync_event(Event::term(), From::term(), StateName::atom(), State::<a href="#type-state">state()</a>) -&gt; {reply, ok, atom(), <a href="#type-state">state()</a>} | {reply, <a href="#type-ensemble_id">ensemble_id()</a>, atom(), <a href="#type-state">state()</a>} | {stop, normal, ok, <a href="#type-state">state()</a>}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="init-1">init/1</a></h3>
+<div class="spec">
+<p><tt>init(X1::[any(), ...]) -&gt; {ok, setup, <a href="#type-state">state()</a>}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="join-2">join/2</a></h3>
+<div class="spec">
+<p><tt>join(Pid::pid(), Id::<a href="#type-peer_id">peer_id()</a>) -&gt; ok | timeout | {error, [{already_member, <a href="#type-peer_id">peer_id()</a>}]}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="join-3">join/3</a></h3>
+<div class="spec">
+<p><tt>join(Pid::pid(), Id::<a href="#type-peer_id">peer_id()</a>, Timeout::timeout()) -&gt; ok | timeout | {error, [{already_member, <a href="#type-peer_id">peer_id()</a>}]}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="kdelete-4">kdelete/4</a></h3>
+<div class="spec">
+<p><tt>kdelete(Node::node(), Target::<a href="#type-target">target()</a>, Key::<a href="#type-key">key()</a>, Timeout::timeout()) -&gt; <a href="#type-std_reply">std_reply()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="kget-4">kget/4</a></h3>
+<div class="spec">
+<p><tt>kget(Node::node(), Target::<a href="#type-target">target()</a>, Key::<a href="#type-key">key()</a>, Timeout::timeout()) -&gt; <a href="#type-std_reply">std_reply()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="kmodify-6">kmodify/6</a></h3>
+<div class="spec">
+<p><tt>kmodify(Node::node(), Target::<a href="#type-target">target()</a>, Key::<a href="#type-key">key()</a>, ModFun::<a href="#type-modify_fun">modify_fun()</a>, Default::term(), Timeout::timeout()) -&gt; <a href="#type-std_reply">std_reply()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="kover-5">kover/5</a></h3>
+<div class="spec">
+<p><tt>kover(Node::node(), Target::<a href="#type-target">target()</a>, Key::<a href="#type-key">key()</a>, New::<a href="#type-obj">obj()</a>, Timeout::timeout()) -&gt; <a href="#type-std_reply">std_reply()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="kput_once-5">kput_once/5</a></h3>
+<div class="spec">
+<p><tt>kput_once(Node::node(), Target::<a href="#type-target">target()</a>, Key::<a href="#type-key">key()</a>, New::<a href="#type-obj">obj()</a>, Timeout::timeout()) -&gt; <a href="#type-std_reply">std_reply()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="ksafe_delete-5">ksafe_delete/5</a></h3>
+<div class="spec">
+<p><tt>ksafe_delete(Node::node(), Target::<a href="#type-target">target()</a>, Key::<a href="#type-key">key()</a>, Current::<a href="#type-obj">obj()</a>, Timeout::timeout()) -&gt; <a href="#type-std_reply">std_reply()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="kupdate-6">kupdate/6</a></h3>
+<div class="spec">
+<p><tt>kupdate(Node::node(), Target::<a href="#type-target">target()</a>, Key::<a href="#type-key">key()</a>, Current::<a href="#type-obj">obj()</a>, New::term(), Timeout::timeout()) -&gt; <a href="#type-std_reply">std_reply()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="leading-2">leading/2</a></h3>
+<div class="spec">
+<p><tt>leading(Msg::term(), State::<a href="#type-state">state()</a>) -&gt; <a href="#type-next_state">next_state()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="leading-3">leading/3</a></h3>
+<div class="spec">
+<p><tt>leading(Msg::term(), From::<a href="#type-fsm_from">fsm_from()</a>, State::<a href="#type-state">state()</a>) -&gt; <a href="#type-sync_next_state">sync_next_state()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="obj_value-2">obj_value/2</a></h3>
+<div class="spec">
+<p><tt>obj_value(Obj::<a href="#type-obj">obj()</a>, Mod::atom() | <a href="#type-state">state()</a>) -&gt; any()</tt><br></p>
+</div>
+
+<h3 class="function"><a name="obj_value-3">obj_value/3</a></h3>
+<div class="spec">
+<p><tt>obj_value(Obj::<a href="#type-obj">obj()</a>, Default::term(), Mod::atom() | <a href="#type-state">state()</a>) -&gt; any()</tt><br></p>
+</div>
+
+<h3 class="function"><a name="pending-2">pending/2</a></h3>
+<div class="spec">
+<p><tt>pending(Msg, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="pending-3">pending/3</a></h3>
+<div class="spec">
+<p><tt>pending(Msg, From, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="prefollow-2">prefollow/2</a></h3>
+<div class="spec">
+<p><tt>prefollow(Msg, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="prefollow-3">prefollow/3</a></h3>
+<div class="spec">
+<p><tt>prefollow(Msg, From, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="prelead-2">prelead/2</a></h3>
+<div class="spec">
+<p><tt>prelead(Msg, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="prelead-3">prelead/3</a></h3>
+<div class="spec">
+<p><tt>prelead(Msg, From, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="prepare-2">prepare/2</a></h3>
+<div class="spec">
+<p><tt>prepare(Msg::term(), State::<a href="#type-state">state()</a>) -&gt; <a href="#type-next_state">next_state()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="prepare-3">prepare/3</a></h3>
+<div class="spec">
+<p><tt>prepare(Msg::term(), From::<a href="#type-fsm_from">fsm_from()</a>, State::<a href="#type-state">state()</a>) -&gt; {next_state, prepare, <a href="#type-state">state()</a>}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="probe-2">probe/2</a></h3>
+<div class="spec">
+<p><tt>probe(Msg::term(), State::<a href="#type-state">state()</a>) -&gt; <a href="#type-next_state">next_state()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="probe-3">probe/3</a></h3>
+<div class="spec">
+<p><tt>probe(Msg::term(), From::<a href="#type-fsm_from">fsm_from()</a>, State::<a href="#type-state">state()</a>) -&gt; {next_state, probe, <a href="#type-state">state()</a>}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="setup-2">setup/2</a></h3>
+<div class="spec">
+<p><tt>setup(X1, State0) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="start-4">start/4</a></h3>
+<div class="spec">
+<p><tt>start(Mod::module(), Ensemble::<a href="#type-ensemble_id">ensemble_id()</a>, Id::<a href="#type-peer_id">peer_id()</a>, Args::[any()]) -&gt; ignore | {error, term()} | {ok, pid()}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="start_link-4">start_link/4</a></h3>
+<div class="spec">
+<p><tt>start_link(Mod::module(), Ensemble::<a href="#type-ensemble_id">ensemble_id()</a>, Id::<a href="#type-peer_id">peer_id()</a>, Args::[any()]) -&gt; ignore | {error, term()} | {ok, pid()}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="sync-2">sync/2</a></h3>
+<div class="spec">
+<p><tt>sync(Msg, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="sync-3">sync/3</a></h3>
+<div class="spec">
+<p><tt>sync(Msg::term(), From::<a href="#type-fsm_from">fsm_from()</a>, State::<a href="#type-state">state()</a>) -&gt; {next_state, sync, <a href="#type-state">state()</a>}</tt><br></p>
+</div>
+
+<h3 class="function"><a name="sync_complete-2">sync_complete/2</a></h3>
+<div class="spec">
+<p><tt>sync_complete(Pid::pid(), Peers::[<a href="#type-peer_id">peer_id()</a>]) -&gt; ok</tt><br></p>
+</div>
+
+<h3 class="function"><a name="sync_failed-1">sync_failed/1</a></h3>
+<div class="spec">
+<p><tt>sync_failed(Pid::pid()) -&gt; ok</tt><br></p>
+</div>
+
+<h3 class="function"><a name="terminate-3">terminate/3</a></h3>
+<div class="spec">
+<p><tt>terminate(Reason::term(), StateName::term(), State::term()) -&gt; ok</tt><br></p>
+</div>
+
+<h3 class="function"><a name="update_members-3">update_members/3</a></h3>
+<div class="spec">
+<p><tt>update_members(Pid::pid(), Changes::[<a href="#type-peer_change">peer_change()</a>], Timeout::timeout()) -&gt; ok | timeout | {error, [{<a href="#type-change_error">change_error()</a>, <a href="#type-peer_id">peer_id()</a>}]}</tt><br></p>
+</div>
+<hr>
+
+<div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<p><i>Generated by EDoc, Jun 11 2014, 15:43:21.</i></p>
+</body>
+</html>
