@@ -38,7 +38,8 @@
          pending/3, sync/3, all_sync/3, check_sync/3, prelead/3, prefollow/3]).
 
 %% Support/debug API
--export([count_quorum/2, check_quorum/2, force_state/2]).
+-export([count_quorum/2, ping_quorum/2, check_quorum/2, force_state/2,
+         get_info/1]).
 
 %% Exported internal callback functions
 -export([do_kupdate/4, do_kput_once/4, do_kmodify/4]).
@@ -157,11 +158,31 @@ check_quorum(Ensemble, Timeout) ->
 
 -spec count_quorum(ensemble_id(), timeout()) -> integer() | timeout.
 count_quorum(Ensemble, Timeout) ->
-    riak_ensemble_router:sync_send_event(node(), Ensemble, count_quorum, Timeout).
+    case ping_quorum(Ensemble, Timeout) of
+        timeout ->
+            timeout;
+        {_Leader, Replies} ->
+            length(Replies)
+    end.
+
+-spec ping_quorum(ensemble_id(), timeout()) -> {leader_id(), [peer_id()]} | timeout.
+ping_quorum(Ensemble, Timeout) ->
+    Result = riak_ensemble_router:sync_send_event(node(), Ensemble,
+                                                  ping_quorum, Timeout),
+    case Result of
+        timeout ->
+            timeout;
+        {Leader, Replies} ->
+            Quorum = [Peer || {Peer, ok} <- Replies],
+            {Leader, Quorum}
+    end.
 
 -spec get_leader(pid()) -> peer_id().
 get_leader(Pid) when is_pid(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, get_leader, infinity).
+
+get_info(Pid) when is_pid(Pid) ->
+    gen_fsm:sync_send_all_state_event(Pid, get_info, infinity).
 
 -spec sync_complete(pid(), [peer_id()]) -> ok.
 sync_complete(Pid, Peers) when is_pid(Pid) ->
@@ -641,25 +662,26 @@ leading(check_quorum, From, State) ->
             send_reply(From, timeout),
             step_down(State2)
     end;
-leading(count_quorum, From, State=#state{fact=Fact, id=Id, members=Members}) ->
+leading(ping_quorum, From, State=#state{fact=Fact, id=Id, members=Members}) ->
     NewFact = increment_sequence(Fact),
     State2 = local_commit(NewFact, State),
     {Future, State3} = blocking_send_all({commit, NewFact}, State2),
     Extra = case lists:member(Id, Members) of
-                true  -> 1;
-                false -> 0
+                true  -> [{Id,ok}];
+                false -> []
             end,
     spawn_link(fun() ->
+                       %% TODO: Should this be hardcoded?
                        timer:sleep(1000),
-                       Count = case wait_for_quorum(Future) of
-                                   {quorum_met, Replies} ->
-                                       %% io:format("met: ~p~n", [Replies]),
-                                       length(Replies) + Extra;
-                                   {timeout, _Replies} ->
-                                       %% io:format("timeout~n"),
-                                       Extra
-                               end,
-                       gen_fsm:reply(From, Count)
+                       Result = case wait_for_quorum(Future) of
+                                    {quorum_met, Replies} ->
+                                        %% io:format("met: ~p~n", [Replies]),
+                                        Extra ++ Replies;
+                                    {timeout, _Replies} ->
+                                        %% io:format("timeout~n"),
+                                        Extra
+                                end,
+                       gen_fsm:reply(From, {Id, Result})
                end),
     {next_state, leading, State3};
 leading(Msg, From, State) ->
@@ -1534,6 +1556,10 @@ handle_event(_Event, StateName, State) ->
                                                   {stop, normal, ok, state()}.
 handle_sync_event(get_leader, _From, StateName, State) ->
     {reply, leader(State), StateName, State};
+handle_sync_event(get_info, _From, StateName, State=#state{trust=Trust}) ->
+    Epoch = epoch(State),
+    Info = {StateName, Trust, Epoch},
+    {reply, Info, StateName, State};
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.
