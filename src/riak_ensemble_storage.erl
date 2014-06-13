@@ -64,8 +64,8 @@
          terminate/2, code_change/3]).
 
 -define(ETS, ets_riak_ensemble_storage).
--define(SYNC_DELAY, 50).
--define(TICK, 5000).
+-define(SYNC_DELAY, riak_ensemble_config:storage_delay()).
+-define(TICK, riak_ensemble_config:storage_tick()).
 
 -type gen_server_from() :: any().
 
