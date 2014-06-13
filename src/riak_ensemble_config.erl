@@ -25,13 +25,13 @@
 %% The primary ensemble tick that determines the rate at which an elected
 %% leader attempts to refresh its lease.
 tick() ->
-    500.
+    get_env(ensemble_tick, 500).
 
 %% @doc
 %% The follower timeout determines how long a follower waits to hear from
 %% the leader before abandoning it.
 follower_timeout() ->
-    tick() * 2.
+    get_env(follower_timeout, tick() * 2).
 
 %% @doc
 %% The election timeout used for randomized election.
@@ -58,30 +58,39 @@ probe_delay() ->
 
 %% @doc The internal timeout used by peer worker FSMs when performing gets.
 local_get_timeout() ->
-    30000.
+    get_env(peer_get_timeout, 60000).
 
 %% @doc The internal timeout used by peer worker FSMs when performing puts.
 local_put_timeout() ->
-    infinity.
+    get_env(peer_put_timeout, 60000).
 
 %% @doc
 %% The number of leader ticks that can go by without hearing from the ensemble
 %% backend.
 alive_ticks() ->
-    1.
+    get_env(alive_tokens, 2).
 
 %% @doc The number of peer workers/FSM processes used by the leader.
 peer_workers() ->
-    1.
+    get_env(peer_workers, 1).
 
 %% @doc
 %% The operation delay used by {@link riak_ensemble_storage} to coalesce
 %% multiple local operations into a single disk oepration.
 storage_delay() ->
-    50.
+    get_env(storage_delay, 50).
 
 %% @doc
 %% The periodic tick at which {@link riak_ensemble_storage} flushes operations
 %% to disk even if there are no explicit sync requests.
 storage_tick() ->
-    5000.
+    get_env(storage_tick, 5000).
+
+get_env(Key, Default) ->
+    case application:get_env(riak_ensemble, Key) of
+        undefined ->
+            Default;
+        {_, Val} ->
+            Val
+    end.
+
