@@ -55,6 +55,17 @@
 
 -define(REQUEST_TIMEOUT, 30000).
 
+-define(ALIVE,   riak_ensemble_config:alive_ticks()).
+-define(WORKERS, riak_ensemble_config:peer_workers()).
+
+-define(FOLLOWER_TIMEOUT,  riak_ensemble_config:follower_timeout()).
+-define(PENDING_TIMEOUT,   riak_ensemble_config:pending_timeout()).
+-define(ELECTION_TIMEOUT,  riak_ensemble_config:election_timeout()).
+-define(PREFOLLOW_TIMEOUT, riak_ensemble_config:prefollow_timeout()).
+-define(PROBE_DELAY,       riak_ensemble_config:probe_delay()).
+-define(LOCAL_GET_TIMEOUT, riak_ensemble_config:local_get_timeout()).
+-define(LOCAL_PUT_TIMEOUT, riak_ensemble_config:local_put_timeout()).
+
 %%%===================================================================
 
 -record(fact, {epoch    :: epoch(),
@@ -119,8 +130,6 @@
                }).
 
 -type state() :: #state{}.
-
--define(ALIVE, 1).
 
 %%%===================================================================
 %%% API
@@ -310,7 +319,7 @@ probe({timeout, Replies}, State=#state{fact=Fact}) ->
     State3 = check_views(State2),
     probe(delay, State3);
 probe(delay, State) ->
-    State2 = set_timer(1000, probe_continue, State),
+    State2 = set_timer(?PROBE_DELAY, probe_continue, State),
     {next_state, probe, State2};
 probe(probe_continue, State) ->
     probe(init, State);
@@ -322,7 +331,7 @@ probe(Msg, From, State) ->
     common(Msg, From, State, probe).
 
 pending(init, State) ->
-    State2 = set_timer(?ENSEMBLE_TICK * 10, pending_timeout, State),
+    State2 = set_timer(?PENDING_TIMEOUT, pending_timeout, State),
     %% TODO: Trusting pending peers makes ensemble vulnerable to concurrent
     %%       node failures during membership changes. Change to move to
     %%       syncing state before moving to following.
@@ -461,8 +470,7 @@ all_sync(Msg, From, State) ->
 election(init, State) ->
     %% io:format("~p/~p: starting election~n", [self(), State#state.id]),
     ?OUT("~p: starting election~n", [State#state.id]),
-    State2 = set_timer(2*?ENSEMBLE_TICK + random:uniform(2*?ENSEMBLE_TICK),
-                       election_timeout, State),
+    State2 = set_timer(?ELECTION_TIMEOUT, election_timeout, State),
     {next_state, election, State2};
 election(election_timeout, State) ->
     case mod_ping(State) of
@@ -510,7 +518,7 @@ election(Msg, From, State) ->
 prefollow({init, Id, NextEpoch}, State) ->
     Prelim = {Id, NextEpoch},
     State2 = State#state{preliminary=Prelim},
-    State3 = set_timer(?ENSEMBLE_TICK * 2, prefollow_timeout, State2),
+    State3 = set_timer(?PREFOLLOW_TIMEOUT, prefollow_timeout, State2),
     {next_state, prefollow, State3};
 %% prefollow({commit, Fact, From}, State=#state{preliminary=Prelim}) ->
 %%     %% TODO: Shouldn't we check that this is from preliminary leader?
@@ -739,7 +747,7 @@ try_commit(NewFact0, State) ->
 
 -spec reset_follower_timer(state()) -> state().
 reset_follower_timer(State) ->
-    set_timer(?ENSEMBLE_TICK*2, follower_timeout, State).
+    set_timer(?FOLLOWER_TIMEOUT, follower_timeout, State).
 
 -spec following(_, state()) -> next_state().
 following(not_ready, State) ->
@@ -1266,7 +1274,7 @@ send_reply(From, Reply) ->
 
 do_put_fsm(Key, Fun, Args, From, Self, State) ->
     %% TODO: Timeout should be configurable per request
-    Local = local_get(Self, Key, 30000),
+    Local = local_get(Self, Key, ?LOCAL_GET_TIMEOUT),
     State2 = State#state{self=Self},
     case is_current(Local, State2) of
         local_timeout ->
@@ -1313,7 +1321,7 @@ do_overwrite_fsm(Key, Val, From, Self, State0=#state{ets=ETS}) ->
 -spec do_get_fsm(_,{_,_},pid(),state()) -> ok.
 do_get_fsm(Key, From, Self, State0) ->
     State = State0#state{self=Self},
-    Local = local_get(Self, Key, 30000),
+    Local = local_get(Self, Key, ?LOCAL_GET_TIMEOUT),
     %% TODO: Allow get to return errors. Make consistent with riak_kv_vnode
     %% TODO: Returning local directly only works if we ensure leader lease
     case is_current(Local, State) of
@@ -1424,7 +1432,7 @@ put_obj(Key, Obj, Seq, State=#state{id=Id, members=Members, self=Self}) ->
     Peers = get_peers(Members, State),
     {Future, State2} = blocking_send_all({put, Key, Obj2, Id, Epoch}, Peers, State),
     %% TODO: local can be failed here, what to do?
-    Local = local_put(Self, Key, Obj2, infinity),
+    Local = local_put(Self, Key, Obj2, ?LOCAL_PUT_TIMEOUT),
     case wait_for_quorum(Future) of
         {quorum_met, _Replies} ->
             {ok, Local, State2};
@@ -1504,7 +1512,7 @@ init([Mod, Ensemble, Id, Args]) ->
     {ok, setup, State}.
 
 setup({init, Args}, State0=#state{id=Id, ensemble=Ensemble, ets=ETS, mod=Mod}) ->
-    NumWorkers = 1,
+    NumWorkers = ?WORKERS,
     Saved = reload_fact(Ensemble, Id),
     Workers = start_workers(NumWorkers, ETS),
     Members = compute_members(Saved#fact.views),

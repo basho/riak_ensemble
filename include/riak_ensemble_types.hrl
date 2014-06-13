@@ -26,4 +26,4 @@
 
 %% -type ensemble_info() :: {leader_id(), [peer_id()], {integer(), integer()}, module(), [any()]}.
 
--define(ENSEMBLE_TICK, 500).
+-define(ENSEMBLE_TICK, riak_ensemble_config:tick()).
