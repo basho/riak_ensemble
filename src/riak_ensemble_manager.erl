@@ -615,8 +615,14 @@ state_changed(State=#state{ensemble_data=EnsData, cluster_state=CS}) ->
     _ = [case Change of
              {add, {Ensemble, Id}, Info} ->
                  #ensemble_info{mod=Mod, args=Args} = Info,
-                 %% Start new peer
-                 _ = riak_ensemble_peer_sup:start_peer(Mod, Ensemble, Id, Args);
+                 %% Maybe start new peer
+                 case Mod:ready_to_start() of
+                     true ->
+                         riak_ensemble_peer_sup:start_peer(Mod, Ensemble,
+                                                           Id, Args);
+                     _ ->
+                         ok
+                 end;
              {del, {Ensemble, Id}} ->
                  %% Stop running peer
                  %% io:format("Should stop: ~p~n", [{Ensemble, Id}]),
