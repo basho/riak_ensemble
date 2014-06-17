@@ -1591,10 +1591,10 @@ handle_info({'DOWN', Ref, _, Pid, Reason}, StateName,
         false ->
             State2 = maybe_restart_worker(Pid, State),
             {next_state, StateName, State2};
-        {ok, ModState} ->
-            {next_state, StateName, State#state{modstate=ModState}};
-        {reset, ModState} ->
-            State2 = State#state{modstate=ModState},
+        {ok, ModState2} ->
+            {next_state, StateName, State#state{modstate=ModState2}};
+        {reset, ModState2} ->
+            State2 = State#state{modstate=ModState2},
             step_down(State2)
     end;
 handle_info(quorum_timeout, StateName, State) ->
