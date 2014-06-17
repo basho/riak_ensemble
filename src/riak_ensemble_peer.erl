@@ -484,7 +484,7 @@ all_sync(sync_failed, State) ->
 all_sync(Msg, State) ->
     common(Msg, State, all_sync).
 
-all_sync(Msg, From, State) ->    
+all_sync(Msg, From, State) ->
     common(Msg, From, State, all_sync).
 
 -spec election(_, state()) -> next_state().
@@ -1585,10 +1585,18 @@ handle_info({'DOWN', _, _, Pid, _Reason}, StateName, State)
             State3 = cancel_timer(State2),
             probe(init, State3)
     end;
-handle_info({'DOWN', _, _, Pid, _Reason}, StateName, State) ->
-    %% io:format("Pid down for: ~p~n", [Reason]),
-    State2 = maybe_restart_worker(Pid, State),
-    {next_state, StateName, State2};
+handle_info({'DOWN', Ref, _, Pid, Reason}, StateName,
+  #state{mod=Mod, modstate=ModState}=State) ->
+    case Mod:handle_down(Ref, Pid, Reason, ModState) of
+        false ->
+            State2 = maybe_restart_worker(Pid, State),
+            {next_state, StateName, State2};
+        {ok, ModState} ->
+            {next_state, StateName, State#state{modstate=ModState}};
+        {reset, ModState} ->
+            State2 = State#state{modstate=ModState},
+            step_down(State2)
+    end;
 handle_info(quorum_timeout, StateName, State) ->
     State2 = quorum_timeout(State),
     {next_state, StateName, State2};
