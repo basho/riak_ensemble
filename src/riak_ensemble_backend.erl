@@ -106,6 +106,17 @@
 %% is returned, backend should eventually call {@link pong/1}.
 -callback ping(pid(), state()) -> {ok|async|failed, state()}.
 
+%% Callback to handle `'DOWN'` messages from monitored, backend related
+%% processes. Returns `false` to indicate that this is a reference not
+%% related to the backend. Returns `{ok, state()}` to indicate that the
+%% backend handled the message and that the peer can continue executing as
+%% before. Returns `{reset, state()}` to indicate that in flight requests are
+%% likely to fail and that any thing the peer needs to do to reset itself, such
+%% as restarting workers, should occur.
+-callback handle_down(reference(), pid(), term(), state()) -> false |
+                                                              {ok, state()} |
+                                                              {reset, state()}.
+
 %%===================================================================
 
 start(Mod, Ensemble, Id, Args) ->
