@@ -124,6 +124,7 @@ root_call({join, Node}, Vsn, State) ->
     _ = lager:info("join(Vsn): ~p :: ~p :: ~p", [Vsn, Node, riak_ensemble_state:members(State)]),
     case riak_ensemble_state:add_member(Vsn, Node, State) of
         {ok, State2} ->
+            riak_ensemble_manager:gossip(State2),
             State2;
         error ->
             failed
@@ -132,6 +133,7 @@ root_call({remove, Node}, Vsn, State) ->
     _ = lager:info("remove(Vsn): ~p :: ~p :: ~p", [Vsn, Node, riak_ensemble_state:members(State)]),
     case riak_ensemble_state:del_member(Vsn, Node, State) of
         {ok, State2} ->
+            riak_ensemble_manager:gossip(State2),
             State2;
         error ->
             failed
