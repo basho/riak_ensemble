@@ -296,8 +296,14 @@ init([]) ->
 handle_call(enable, _From, State) ->
     case activate(State) of
         {ok, State2} ->
+            Reply = case maybe_save_state(State2) of
+                        ok ->
+                            ok = riak_ensemble_storage:sync();
+                        Error={error,_} ->
+                            Error
+                    end,
             State3 = state_changed(State2),
-            {reply, ok, State3};
+            {reply, Reply, State3};
         error ->
             {reply, error, State}
     end;
