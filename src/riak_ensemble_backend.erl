@@ -116,6 +116,8 @@
 -callback handle_down(reference(), pid(), term(), state()) -> false |
                                                               {ok, state()} |
                                                               {reset, state()}.
+%% Callback used to determine if peers using this backend can be started.
+-callback ready_to_start() -> boolean().
 
 %%===================================================================
 
