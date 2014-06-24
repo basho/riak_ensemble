@@ -295,15 +295,16 @@ init([]) ->
 
 handle_call(enable, _From, State) ->
     case activate(State) of
-        {ok, State2} ->
-            Reply = case maybe_save_state(State2) of
-                        ok ->
-                            ok = riak_ensemble_storage:sync();
-                        Error={error,_} ->
-                            Error
-                    end,
-            State3 = state_changed(State2),
-            {reply, Reply, State3};
+        {ok, State2, RootInfo} ->
+            case maybe_save_state(State2) of
+                ok ->
+                    ok = riak_ensemble_storage:sync(),
+                    ets:insert(?ETS, RootInfo),
+                    State3 = state_changed(State2),
+                    {reply, ok, State3};
+                {error,_} ->
+                    {reply, error, State}
+            end;
         error ->
             {reply, error, State}
     end;
@@ -494,7 +495,7 @@ initial_state() ->
                  cluster_state=CS},
     State.
 
--spec activate(state()) -> {ok, state()} | error.
+-spec activate(state()) -> {ok, state(), tuple()} | error.
 activate(State=#state{cluster_state=CS}) ->
     case riak_ensemble_state:enabled(CS) of
         true ->
@@ -502,15 +503,16 @@ activate(State=#state{cluster_state=CS}) ->
         false ->
             RootLeader = {root, node()},
             Members = [RootLeader],
-            Root = #ensemble_info{leader=RootLeader, views=[Members], seq={0,0}, vsn={0,0}},
-            ets:insert(?ETS, {root, RootLeader,
-                              {Root#ensemble_info.vsn, Root#ensemble_info.views},
-                              undefined}),
+            Root = #ensemble_info{leader=RootLeader, views=[Members],
+                                  seq={0,0}, vsn={0,0}},
+            RootInfo = {root, RootLeader, {Root#ensemble_info.vsn,
+                                           Root#ensemble_info.views},
+                        undefined},
             {ok, CS1} = riak_ensemble_state:enable(CS),
             {ok, CS2} = riak_ensemble_state:add_member({0,0}, node(), CS1),
             {ok, CS3} = riak_ensemble_state:set_ensemble(root, Root, CS2),
             State2 = State#state{cluster_state=CS3},
-            {ok, State2}
+            {ok, State2, RootInfo}
     end.
 
 -spec join_allowed(cluster_state(), cluster_state()) -> true               |
