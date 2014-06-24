@@ -1453,13 +1453,18 @@ put_obj(Key, Obj, Seq, State=#state{id=Id, members=Members, self=Self}) ->
     Obj2 = increment_obj(Key, Obj, Seq, State),
     Peers = get_peers(Members, State),
     {Future, State2} = blocking_send_all({put, Key, Obj2, Id, Epoch}, Peers, State),
-    %% TODO: local can be failed here, what to do?
-    Local = local_put(Self, Key, Obj2, ?LOCAL_PUT_TIMEOUT),
-    case wait_for_quorum(Future) of
-        {quorum_met, _Replies} ->
-            {ok, Local, State2};
-        {timeout, _Replies} ->
-            {failed, State2}
+    case local_put(Self, Key, Obj2, infinity) of
+        failed ->
+            lager:warning("Failed local_put for Key ~p, Id = ~p", [Key, Id]),
+            gen_fsm:sync_send_event(Self, request_failed, infinity),
+            {failed, State2};
+        Local ->
+            case wait_for_quorum(Future) of
+                {quorum_met, _Replies} ->
+                    {ok, Local, State2};
+                {timeout, _Replies} ->
+                    {failed, State2}
+            end
     end.
 
 -spec increment_obj(key(), obj(), seq(), state()) -> obj().
