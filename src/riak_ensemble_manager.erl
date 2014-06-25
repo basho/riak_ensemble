@@ -272,7 +272,12 @@ count_quorum(Ensemble, Timeout) ->
 
 -spec typed_call(node(), call_msg(), infinity) -> any().
 typed_call(Node, Msg, Timeout) ->
-    gen_server:call({?MODULE, Node}, Msg, Timeout).
+    try
+        gen_server:call({?MODULE, Node}, Msg, Timeout)
+    catch
+        exit:Err ->
+            {error, Err}
+    end.
 
 -spec typed_cast(node() | pid(), cast_msg()) -> ok.
 typed_cast(Pid, Msg) when is_pid(Pid) ->
