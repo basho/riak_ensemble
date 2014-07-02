@@ -21,6 +21,7 @@
 -module(riak_ensemble_client).
 -export([kget/3, kupdate/5, kput_once/4, kover/4, kdelete/3, ksafe_delete/4]).
 -export([kget/4, kupdate/6, kput_once/5, kover/5, kdelete/4, ksafe_delete/5]).
+-export([kget/5]).
 
 -include_lib("riak_ensemble_types.hrl").
 
@@ -36,9 +37,13 @@ kget(Ensemble, Key, Timeout) ->
 
 -spec kget(node(),_,_,timeout()) -> client_reply().
 kget(Node, Ensemble, Key, Timeout) ->
+    kget(Node, Ensemble, Key, Timeout, []).
+
+-spec kget(node(),_,_,timeout(),_) -> client_reply().
+kget(Node, Ensemble, Key, Timeout, Opts) ->
     maybe(Node,
           fun() ->
-              translate(riak_ensemble_peer:kget(Node, Ensemble, Key, Timeout))
+              translate(riak_ensemble_peer:kget(Node, Ensemble, Key, Timeout, Opts))
           end).
 
 %%%===================================================================

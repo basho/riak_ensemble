@@ -1,5 +1,10 @@
-# Following test currently fails (intentionally)
-#drop_write_test
+basic_test
+drop_write_test
+expand_test
 synctree_pure
 synctree_remote
 synctree_eqc
+corrupt_upper_test
+corrupt_segment_test
+corrupt_exchange_test
+corrupt_follower_test

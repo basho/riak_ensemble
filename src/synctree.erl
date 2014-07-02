@@ -82,6 +82,9 @@
 -export([rehash_upper/1, rehash/1]).
 -export([verify_upper/1, verify/1]).
 
+%% TODO: Should we eeally exporting these directly?
+-export([m_batch/2, m_flush/1]).
+
 -define(WIDTH, 16).
 -define(SEGMENTS, 1024*1024).
 
