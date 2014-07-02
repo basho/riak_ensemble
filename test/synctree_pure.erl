@@ -9,15 +9,19 @@ run_test_() ->
     Timeout = 60,
     Tests = [?TEST(test_basic_orddict),
              ?TEST(test_basic_ets),
+             ?TEST(test_basic_leveldb),
              %% Kinda slow with orddict, disabling for now
              %% ?TEST(test_corrupt_orddict),
              ?TEST(test_corrupt_ets),
+             ?TEST(test_corrupt_leveldb),
              ?TEST(test_exchange_orddict),
-             ?TEST(test_exchange_ets)],
+             ?TEST(test_exchange_ets),
+             ?TEST(test_exchange_leveldb)],
     {timeout, Timeout, Tests}.
 
 test_basic_orddict() -> test_basic(synctree_orddict).
 test_basic_ets()     -> test_basic(synctree_ets).
+test_basic_leveldb() -> test_basic(synctree_leveldb).
 
 test_basic(Mod) ->
     T = build(100, Mod),
@@ -32,6 +36,7 @@ test_basic(Mod) ->
 
 test_corrupt_orddict() -> test_corrupt(synctree_orddict).
 test_corrupt_ets()     -> test_corrupt(synctree_ets).
+test_corrupt_leveldb() -> test_corrupt(synctree_leveldb).
 
 test_corrupt(Mod) ->
     T = build(10, Mod),
@@ -48,6 +53,7 @@ test_corrupt(Mod) ->
 
 test_exchange_orddict() -> test_exchange(synctree_orddict).
 test_exchange_ets()     -> test_exchange(synctree_ets).
+test_exchange_leveldb() -> test_exchange(synctree_leveldb).
 
 test_exchange(Mod) ->
     Num = 50,

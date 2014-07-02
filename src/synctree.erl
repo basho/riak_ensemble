@@ -75,6 +75,7 @@
 -module(synctree).
 
 -export([new/0, new/1, new/3, new/4, new/5]).
+-export([newdb/1, newdb/2]).
 -export([height/1, top_hash/1]).
 -export([insert/3, get/2, exchange_get/3, corrupt/2]).
 -export([compare/3, compare/4, compare/5, local_compare/2, direct_exchange/1]).
@@ -105,6 +106,12 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% API
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+newdb(Id) ->
+    newdb(Id, []).
+
+newdb(Id, Opts) ->
+    new(Id, default, default, synctree_leveldb, Opts).
 
 new() ->
     new(undefined).
