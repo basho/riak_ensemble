@@ -131,12 +131,15 @@ orddict_delta([{K1,V1}|D1], [{_K2,V2}|D2], Acc) -> %K1 == K2
             Acc2 = [{K1,{V1,V2}} | Acc],
             orddict_delta(D1, D2, Acc2)
     end;
-orddict_delta([], D2, Acc) ->
-    L = [{K2,{'$none',V2}} || {K2,V2} <- D2],
-    L ++ Acc;
-orddict_delta(D1, [], Acc) ->
-    L = [{K1,{V1,'$none'}} || {K1,V1} <- D1],
-    L ++ Acc.
+orddict_delta([], [{K2,V2}|D2], Acc) ->
+    Acc2 = [{K2,{'$none',V2}} | Acc],
+    orddict_delta([], D2, Acc2);
+orddict_delta([{K1,V1}|D1], [], Acc) ->
+    Acc2 = [{K1,{V1,'$none'}} | Acc],
+    orddict_delta(D1, [], Acc2);
+orddict_delta([], [], Acc) ->
+    lists:reverse(Acc).
+
 
 -spec shuffle([T]) -> [T].
 shuffle([]) ->
