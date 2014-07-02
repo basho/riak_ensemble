@@ -21,5 +21,12 @@ deps:
 compile:
 	$(REBAR) skip_deps=true compile
 
+testdeps: deps
+	$(REBAR) -C rebar.test.config get-deps
+	$(REBAR) -C rebar.test.config compile
+
+test: testdeps compile
+	bash test/run.sh
+
 typer:
 	typer --plt $(DEPS_PLT) -I include -r ./src

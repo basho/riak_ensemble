@@ -45,6 +45,7 @@
               value :: term()}).
 
 -record(state, {savefile :: file:filename(),
+                id       :: peer_id(),
                 data     :: orddict:orddict()}).
 
 -type obj()   :: #obj{}.
@@ -63,7 +64,7 @@ init(Ensemble, Id, []) ->
     {ok, Root} = application:get_env(riak_ensemble, data_root),
     File = filename:join([Root, "ensembles", Name ++ "_kv"]),
     Data = reload_data(File),
-    #state{savefile=File, data=Data}.
+    #state{savefile=File, data=Data, id=Id}.
 
 %%===================================================================
 
