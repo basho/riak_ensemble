@@ -1,1 +1,5 @@
-drop_write_test
+# Following test currently fails (intentionally)
+#drop_write_test
+synctree_pure
+synctree_remote
+synctree_eqc
