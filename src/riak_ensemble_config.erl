@@ -28,10 +28,24 @@ tick() ->
     get_env(ensemble_tick, 500).
 
 %% @doc
+%% The leader lease duration. Should be greater than the leader tick to give
+%% the leader time to refresh before expiration, but lower than the follower
+%% timeout.
+lease() ->
+    get_env(lease_duration, tick() * 2 div 3).
+
+%% @doc
+%% This setting determines if leader leases are trusted or not. Trusting the
+%% lease allows a leader to reply to reads without contacting remote peers
+%% as long as its lease has not yet expired.
+trust_lease() ->
+    get_env(trust_lease, true).
+
+%% @doc
 %% The follower timeout determines how long a follower waits to hear from
 %% the leader before abandoning it.
 follower_timeout() ->
-    get_env(follower_timeout, tick() * 2).
+    get_env(follower_timeout, lease() * 4).
 
 %% @doc
 %% The election timeout used for randomized election.
@@ -93,4 +107,3 @@ get_env(Key, Default) ->
         {_, Val} ->
             Val
     end.
-

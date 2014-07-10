@@ -130,6 +130,7 @@
                 last_views    :: [[peer_id()]],
                 async         :: pid(),
                 tree          :: pid(),
+                lease         :: riak_ensemble_lease:lease_ref(),
                 self          :: pid()
                }).
 
@@ -798,6 +799,14 @@ following(follower_timeout, State) ->
     ?OUT("~p: follower_timeout from ~p~n", [State#state.id, leader(State)]),
     %% io:format("~p: follower_timeout from ~p~n", [State#state.id, leader(State)]),
     abandon(State#state{timer=undefined});
+following({check_epoch, Id, Epoch, From}, State) ->
+    case check_epoch(Id, Epoch, State) of
+        true ->
+            reply(From, ok, State);
+        false ->
+            reply(From, nack, State)
+    end,
+    {next_state, following, State};
 following(Msg, State) ->
     case following_kv(Msg, State) of
         false ->
@@ -825,6 +834,10 @@ forward(Msg, From, State) ->
 -spec valid_request(_,_,state()) -> boolean().
 valid_request(Peer, ReqEpoch, State=#state{ready=Ready}) ->
     Ready and (ReqEpoch =:= epoch(State)) and (Peer =:= leader(State)).
+
+-spec check_epoch(peer_id(), epoch(), state()) -> boolean().
+check_epoch(Peer, Epoch, State) ->
+    (Epoch =:= epoch(State)) and (Peer =:= leader(State)).
 
 -spec increment_epoch(fact() | state()) -> {pos_integer(), fact() | state()}.
 increment_epoch(Fact=#fact{epoch=Epoch}) ->
@@ -863,8 +876,9 @@ local_commit(Fact=#fact{leader=_Leader, epoch=Epoch, seq=Seq, views=Views},
 step_down(State) ->
     step_down(probe, State).
 
-step_down(Next, State) ->
+step_down(Next, State=#state{lease=Lease}) ->
     ?OUT("~p: stepping down~n", [State#state.id]),
+    riak_ensemble_lease:unlease(Lease),
     State2 = cancel_timer(State),
     reset_workers(State),
     State3 = set_leader(undefined, State2),
@@ -1023,7 +1037,7 @@ nack(_Msg, _State) ->
 -type m_tick() :: {ok|failed|changed|shutdown, state()}.
 -type m_tick_fun() :: fun((state()) -> m_tick()).
 
-leader_tick(State=#state{ensemble=Ensemble, id=Id}) ->
+leader_tick(State=#state{ensemble=Ensemble, id=Id, lease=Lease}) ->
     State2 = mod_tick(State),
     M1 = {ok, State2},
     M2 = continue(M1, fun maybe_ping/1),
@@ -1042,6 +1056,7 @@ leader_tick(State=#state{ensemble=Ensemble, id=Id}) ->
             timer:sleep(1000),
             step_down(stop, State3);
         {_, State3} ->
+            riak_ensemble_lease:lease(Lease, riak_ensemble_config:lease()),
             State4 = set_timer(?ENSEMBLE_TICK, tick, State3),
             {next_state, leading, State4}
     end.
@@ -1406,7 +1421,15 @@ do_get_fsm(Key, From, Self, ObjSeq, Opts, State0) ->
         true ->
             case LocalOnly of
                 true ->
-                    send_reply(From, {ok, Local});
+                    case check_lease(State) of
+                        true ->
+                            send_reply(From, {ok, Local});
+                        false ->
+                            %% TODO: If there's a new leader, we could forward
+                            %%       instead of timeout.
+                            send_reply(From, timeout),
+                            gen_fsm:sync_send_event(Self, request_failed, infinity)
+                    end;
                 false ->
                     case get_latest_obj(Key, Local, ObjSeq, State) of
                         {ok, Latest, Replies, _State2} ->
@@ -1429,6 +1452,31 @@ do_get_fsm(Key, From, Self, ObjSeq, Opts, State0) ->
                     send_reply(From, failed),
                     gen_fsm:sync_send_event(Self, request_failed, infinity)
             end
+    end.
+
+-spec check_lease(state()) -> boolean().
+check_lease(State=#state{id=Id}) ->
+    case valid_lease(State) of
+        true ->
+            true;
+        false ->
+            Epoch = epoch(State),
+            {Future, _State2} = blocking_send_all({check_epoch, Id, Epoch}, State),
+            case wait_for_quorum(Future) of
+                {quorum_met, _Replies} ->
+                    true;
+                {timeout, _Replies} ->
+                    false
+            end
+    end.
+
+-spec valid_lease(state()) -> boolean().
+valid_lease(#state{lease=Lease}) ->
+    case riak_ensemble_config:trust_lease() of
+        true ->
+            riak_ensemble_lease:check_lease(Lease);
+        _ ->
+            false
     end.
 
 maybe_repair(Key, Latest, Replies, State=#state{id=Id}) ->
@@ -1703,10 +1751,12 @@ setup({init, Args}, State0=#state{id=Id, ensemble=Ensemble, ets=ETS, mod=Mod}) -
     Saved = reload_fact(Ensemble, Id),
     Workers = start_workers(NumWorkers, ETS),
     Members = compute_members(Saved#fact.views),
+    {ok, Lease} = riak_ensemble_lease:start_link(),
     State = State0#state{workers=list_to_tuple(Workers),
                          tree=Tree,
                          fact=Saved,
                          members=Members,
+                         lease=Lease,
                          modstate=riak_ensemble_backend:start(Mod, Ensemble, Id, Args)},
     State2 = check_views(State),
     %% TODO: Why are we local commiting on startup?
