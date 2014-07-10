@@ -8,3 +8,5 @@ corrupt_upper_test
 corrupt_segment_test
 corrupt_exchange_test
 corrupt_follower_test
+lease_test
+ensemble_tests_pure
