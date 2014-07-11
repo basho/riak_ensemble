@@ -106,6 +106,9 @@
 
 -type tree() :: #tree{}.
 
+%% Supported hash methods
+-define(H_MD5, 0).
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% API
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -231,7 +234,8 @@ get_segment(Key, #tree{segments=Segments}) ->
 
 hash(Term) ->
     L = [H || {_,H} <- Term],
-    crypto:hash(md5, L).
+    HashBin = crypto:hash(md5, L),
+    <<?H_MD5, HashBin/binary>>.
 
 ensure_binary(Key) when is_integer(Key) ->
     <<Key:64/integer>>;
@@ -300,6 +304,9 @@ verify_hash(undefined, _Actual) ->
     %% io:format("Actual:   ~p~n", [_Actual]),
     false;
 verify_hash(Expected, Hashes) ->
+    %% Note: when we add support for multiple hash functions, update this
+    %%       function to compute Actual using the same function that was
+    %%       previously used to compute Expected.
     Actual = hash(Hashes),
     case Expected of
         Actual ->
