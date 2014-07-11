@@ -34,7 +34,6 @@
 -export([obj_epoch/1, obj_seq/1, obj_key/1, obj_value/1]).
 -export([set_obj_epoch/2, set_obj_seq/2, set_obj_value/2]).
 -export([get/3, put/4, tick/5, ping/2, ready_to_start/0]).
--export([trusted/1, sync_request/2, sync/2]).
 -export([synctree_path/2]).
 -export([handle_down/4]).
 
@@ -127,27 +126,6 @@ put(Key, Obj, From, State=#state{savefile=File, data=Data}) ->
 
 %%===================================================================
 
--spec sync_request(riak_ensemble_backend:from(), state()) -> state().
-sync_request(From, State=#state{data=Data}) ->
-    riak_ensemble_backend:reply(From, Data),
-    State.
-
--spec sync([{peer_id(), orddict:orddict()}], state()) -> {ok, state()}       |
-                                                         {async, state()}    |
-                                                         {{error,_}, state()}.
-sync(OtherData, State=#state{savefile=File, data=Data}) ->
-    LatestFn = fun(_, Obj1, Obj2) ->
-                       riak_ensemble_backend:latest_obj(?MODULE, Obj1, Obj2)
-               end,
-    Data2 = lists:foldl(fun({_PeerId, PeerData}, Acc) ->
-                                orddict:merge(LatestFn, Acc, PeerData)
-                        end, Data, OtherData),
-    save_data(File, Data2),
-    State2 = State#state{data=Data2},
-    {ok, State2}.
-
-%%===================================================================
-
 -spec tick(epoch(), seq(), peer_id(), views(), state()) -> state().
 tick(_Epoch, _Seq, _Leader, _Views, State) ->
     State.
@@ -155,9 +133,6 @@ tick(_Epoch, _Seq, _Leader, _Views, State) ->
 -spec ping(pid(), state()) -> {ok, state()}.
 ping(_From, State) ->
     {ok, State}.
-
-trusted(_State) ->
-    false.
 
 ready_to_start() ->
     true.

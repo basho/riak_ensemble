@@ -28,7 +28,6 @@
 %% API
 -export([start_link/4, start/4]).
 -export([join/2, join/3, update_members/3, get_leader/1, backend_pong/1]).
--export([sync_complete/2, sync_failed/1]).
 -export([kget/4, kget/5, kupdate/6, kput_once/5, kover/5, kmodify/6, kdelete/4,
          ksafe_delete/5, obj_value/2, obj_value/3]).
 -export([setup/2]).
@@ -199,14 +198,6 @@ get_leader(Pid) when is_pid(Pid) ->
 
 get_info(Pid) when is_pid(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, get_info, infinity).
-
--spec sync_complete(pid(), [peer_id()]) -> ok.
-sync_complete(Pid, Peers) when is_pid(Pid) ->
-    gen_fsm:send_event(Pid, {sync_complete, Peers}).
-
--spec sync_failed(pid()) -> ok.
-sync_failed(Pid) when is_pid(Pid) ->
-    gen_fsm:send_event(Pid, sync_failed).
 
 backend_pong(Pid) when is_pid(Pid) ->
     gen_fsm:send_event(Pid, backend_pong).
@@ -399,7 +390,7 @@ pending(Msg, From, State) ->
     common(Msg, From, State, pending).
 
 maybe_follow(_, State=#state{tree_trust=false}) ->
-    %% This peer is untrusted and must sync
+    %% This peer is untrusted and must perform an exchange
     exchange(init, State);
 maybe_follow(undefined, State) ->
     election(init, set_leader(undefined, State));
@@ -410,7 +401,7 @@ maybe_follow(Leader, State) ->
     following(not_ready, set_leader(Leader, State)).
 
 %%%===================================================================
-%%% tree verification/syncing
+%%% tree verification/exchange
 %%%===================================================================
 
 repair(init, State=#state{tree=Tree}) ->
