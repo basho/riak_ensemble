@@ -9,7 +9,7 @@ endif
 
 .PHONY: all compile clean deps test dialyzer typer
 
-all: deps compile xref dialyzer test
+all: deps compile xref dialyzer runtests
 
 clean:
 	$(REBAR) clean
@@ -20,6 +20,18 @@ deps:
 
 compile:
 	$(REBAR) skip_deps=true compile
+
+testdeps: deps
+	$(REBAR) -C rebar.test.config get-deps
+	$(REBAR) -C rebar.test.config compile
+
+test: failtest
+
+failtest:
+	$(error Do not use 'make test', use 'make runtests')
+
+runtests: testdeps compile
+	bash test/run.sh
 
 typer:
 	typer --plt $(DEPS_PLT) -I include -r ./src

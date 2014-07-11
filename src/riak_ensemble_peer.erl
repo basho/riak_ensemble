@@ -28,18 +28,20 @@
 %% API
 -export([start_link/4, start/4]).
 -export([join/2, join/3, update_members/3, get_leader/1, backend_pong/1]).
--export([sync_complete/2, sync_failed/1]).
--export([kget/4, kupdate/6, kput_once/5, kover/5, kmodify/6, kdelete/4,
+-export([kget/4, kget/5, kupdate/6, kput_once/5, kover/5, kmodify/6, kdelete/4,
          ksafe_delete/5, obj_value/2, obj_value/3]).
 -export([setup/2]).
 -export([probe/2, election/2, prepare/2, leading/2, following/2,
          probe/3, election/3, prepare/3, leading/3, following/3]).
--export([pending/2, sync/2, all_sync/2, check_sync/2, prelead/2, prefollow/2,
-         pending/3, sync/3, all_sync/3, check_sync/3, prelead/3, prefollow/3]).
+-export([pending/2, prelead/2, prefollow/2,
+         pending/3, prelead/3, prefollow/3]).
+-export([repair/2, exchange/2,
+         repair/3, exchange/3]).
+-export([valid_obj_hash/2]).
 
 %% Support/debug API
 -export([count_quorum/2, ping_quorum/2, check_quorum/2, force_state/2,
-         get_info/1]).
+         get_info/1, stable_views/2]).
 
 %% Exported internal callback functions
 -export([do_kupdate/4, do_kput_once/4, do_kmodify/4]).
@@ -66,6 +68,9 @@
 -define(PROBE_DELAY,       riak_ensemble_config:probe_delay()).
 -define(LOCAL_GET_TIMEOUT, riak_ensemble_config:local_get_timeout()).
 -define(LOCAL_PUT_TIMEOUT, riak_ensemble_config:local_put_timeout()).
+
+%% Supported object hashes used in synctree metadata
+-define(H_OBJ_NONE, 0).
 
 %%%===================================================================
 
@@ -122,11 +127,12 @@
                 mod           :: module(),
                 modstate      :: any(),
                 workers       :: tuple(),
-                trust         :: boolean(),
-                trust_pid     :: pid(),
+                tree_trust    :: boolean(),
+                tree_ready    :: boolean(),
                 alive         :: integer(),
                 last_views    :: [[peer_id()]],
                 async         :: pid(),
+                tree          :: pid(),
                 self          :: pid()
                }).
 
@@ -170,21 +176,25 @@ count_quorum(Ensemble, Timeout) ->
     case ping_quorum(Ensemble, Timeout) of
         timeout ->
             timeout;
-        {_Leader, Replies} ->
+        {_Leader, _, Replies} ->
             length(Replies)
     end.
 
--spec ping_quorum(ensemble_id(), timeout()) -> {leader_id(), [peer_id()]} | timeout.
+-spec ping_quorum(ensemble_id(), timeout()) -> {leader_id(), boolean(), [peer_id()]} | timeout.
 ping_quorum(Ensemble, Timeout) ->
     Result = riak_ensemble_router:sync_send_event(node(), Ensemble,
                                                   ping_quorum, Timeout),
     case Result of
         timeout ->
             timeout;
-        {Leader, Replies} ->
+        {Leader, Ready, Replies} ->
             Quorum = [Peer || {Peer, ok} <- Replies],
-            {Leader, Quorum}
+            {Leader, Ready, Quorum}
     end.
+
+-spec stable_views(ensemble_id(), timeout()) -> {ok, boolean()} | timeout.
+stable_views(Ensemble, Timeout) ->
+    riak_ensemble_router:sync_send_event(node(), Ensemble, stable_views, Timeout).
 
 -spec get_leader(pid()) -> peer_id().
 get_leader(Pid) when is_pid(Pid) ->
@@ -192,14 +202,6 @@ get_leader(Pid) when is_pid(Pid) ->
 
 get_info(Pid) when is_pid(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, get_info, infinity).
-
--spec sync_complete(pid(), [peer_id()]) -> ok.
-sync_complete(Pid, Peers) when is_pid(Pid) ->
-    gen_fsm:send_event(Pid, {sync_complete, Peers}).
-
--spec sync_failed(pid()) -> ok.
-sync_failed(Pid) when is_pid(Pid) ->
-    gen_fsm:send_event(Pid, sync_failed).
 
 backend_pong(Pid) when is_pid(Pid) ->
     gen_fsm:send_event(Pid, backend_pong).
@@ -213,7 +215,11 @@ force_state(Pid, EpochSeq) ->
 
 -spec kget(node(), target(), key(), timeout()) -> std_reply().
 kget(Node, Target, Key, Timeout) ->
-    Result = riak_ensemble_router:sync_send_event(Node, Target, {get, Key}, Timeout),
+    kget(Node, Target, Key, Timeout, []).
+
+-spec kget(node(), target(), key(), timeout(), _) -> std_reply().
+kget(Node, Target, Key, Timeout, Opts) ->
+    Result = riak_ensemble_router:sync_send_event(Node, Target, {get, Key, Opts}, Timeout),
     ?OUT("get(~p): ~p~n", [Key, Result]),
     Result.
 
@@ -353,10 +359,7 @@ probe(Msg, From, State) ->
 
 pending(init, State) ->
     State2 = set_timer(?PENDING_TIMEOUT, pending_timeout, State),
-    %% TODO: Trusting pending peers makes ensemble vulnerable to concurrent
-    %%       node failures during membership changes. Change to move to
-    %%       syncing state before moving to following.
-    {next_state, pending, State2#state{trust=true}};
+    {next_state, pending, State2#state{tree_trust=false}};
 pending(pending_timeout, State) ->
     probe({timeout, []}, State);
 pending({prepare, Id, NextEpoch, From}, State=#state{fact=Fact}) ->
@@ -390,102 +393,62 @@ pending(Msg, State) ->
 pending(Msg, From, State) ->
     common(Msg, From, State, pending).
 
-maybe_follow(_, State=#state{trust=false}) ->
-    %% This peer is untrusted and must sync
-    sync(init, State);
+maybe_follow(_, State=#state{tree_trust=false}) ->
+    %% This peer is untrusted and must perform an exchange
+    exchange(init, State);
 maybe_follow(undefined, State) ->
     election(init, set_leader(undefined, State));
 maybe_follow(Leader, State=#state{id=Leader}) ->
     election(init, set_leader(undefined, State));
 maybe_follow(Leader, State) ->
-    %% io:format("~p: Following ~p~n", [State#state.id, Leader]),
     %% TODO: Should we use prefollow instead of following(not_ready)?
     following(not_ready, set_leader(Leader, State)).
 
-sync(init, State) ->
-    ?OUT("~p: sync~n", [State#state.id]),
-    %% _ = lager:info("~p is UNtrusted", [State#state.id]),
-    State2 = send_all(sync, other, State),
-    {next_state, sync, State2};
-sync({quorum_met, Replies}, State) ->
-    {Result, State2} = mod_sync(Replies, State),
-    %% io:format("========~n~p~n~p~n~p~n~p~n========~n", [Replies, Result, State, State2]),
-    case Result of
-        ok ->
-            probe(init, State2#state{trust=true});
-        async ->
-            {next_state, sync, State2};
-        {error, _} ->
-            ?OUT("~p/~p: error when syncing: ~p~n", [State#state.id, self(), Result]),
-            probe(init, State2)
-    end;
-sync({timeout, _Replies}, State) ->
-    %% _ = lager:info("timeout: trying all_sync"),
-    all_sync(init, State);
-sync({sync_complete, Peers}, State) ->
-    %% Check that the remote peers are still trusted
-    check_sync({init, Peers}, State);
-sync(sync_failed, State) ->
-    %% Asynchronous sync failed
-    probe(init, State);
-sync(Msg, State) ->
-    common(Msg, State, sync).
+%%%===================================================================
+%%% tree verification/exchange
+%%%===================================================================
 
--spec sync(_, fsm_from(), state()) -> {next_state, sync, state()}.
-sync(Msg, From, State) ->
-    common(Msg, From, State, sync).
+repair(init, State=#state{tree=Tree}) ->
+    riak_ensemble_peer_tree:async_repair(Tree),
+    {next_state, repair, State#state{tree_trust=false}};
+repair(repair_complete, State) ->
+    exchange(init, State);
+repair(Msg, State) ->
+    common(Msg, State, repair).
 
-check_sync({init, Peers}, State) ->
-    case Peers of
-        [] ->
-            check_sync({quorum_met, []}, State);
-        _ ->
-            %% TODO: Add explicit check_sync message rather than abuse sync,
-            %%       in case sync implementation is not pure or is expensive.
-            State2 = send_peers(sync, Peers, State),
-            {next_state, check_sync, State2}
-    end;
-check_sync({quorum_met, _Replies}, State) ->
-    %% Asynchronous sync complete
-    %% _ = lager:info("~p is trusted", [State#state.id]),
-    probe(init, State#state{trust=true});
-check_sync({timeout, _Replies}, State) ->
-    %% _ = lager:info("check_sync: timeout"),
-    probe(init, State);
-check_sync(Msg, State) ->
-    common(Msg, State, check_sync).
+-spec repair(_, fsm_from(), state()) -> {next_state, repair, state()}.
+repair(Msg, From, State) ->
+    common(Msg, From, State, repair).
 
-check_sync(Msg, From, State) ->
-    common(Msg, From, State, check_sync).
+%%%===================================================================
 
-all_sync(init, State) ->
-    State2 = send_all(all_sync, all, State),
-    {next_state, all_sync, State2};
-all_sync({timeout, _Replies}, State) ->
-    probe(init, State);
-all_sync({quorum_met, Replies}, State) ->
-    {Result, State2} = mod_sync(Replies, State),
-    case Result of
-        ok ->
-            probe(init, State2#state{trust=true});
-        async ->
-            {next_state, all_sync, State2};
-        {error, _} ->
-            ?OUT("~p/~p: error when syncing: ~p~n", [State#state.id, self(), Result]),
-            probe(init, State2)
-    end;
-all_sync({sync_complete, _Peers}, State) ->
-    %% Asynchronous sync complete
-    %% _ = lager:info("~p is trusted (all sync)", [State#state.id]),
-    probe(init, State#state{trust=true});
-all_sync(sync_failed, State) ->
-    %% Asynchronous sync failed
-    probe(init, State);
-all_sync(Msg, State) ->
-    common(Msg, State, all_sync).
+exchange(init, State) ->
+    start_exchange(State),
+    {next_state, exchange, State};
+exchange(exchange_complete, State) ->
+    election(init, State#state{tree_trust=true});
+exchange(exchange_failed, State) ->
+    %% Asynchronous exchange failed
+    probe(delay, State);
+exchange(Msg, State) ->
+    common(Msg, State, exchange).
 
-all_sync(Msg, From, State) ->
-    common(Msg, From, State, all_sync).
+exchange(tree_corrupted, From, State) ->
+    gen_fsm:reply(From, ok),
+    repair(init, State);
+exchange(Msg, From, State) ->
+    common(Msg, From, State, exchange).
+
+%%%===================================================================
+
+start_exchange(State=#state{id=Id, ensemble=Ensemble, tree=Tree, members=Members,
+                            tree_trust=Trusted}) ->
+    Peers = get_peers(Members, State),
+    Views = views(State),
+    riak_ensemble_exchange:start_exchange(Ensemble, self(), Id, Tree, Peers, Views, Trusted),
+    ok.
+
+%%%===================================================================
 
 -spec election(_, state()) -> next_state().
 election(init, State) ->
@@ -527,8 +490,6 @@ election({commit, NewFact, From}, State) ->
         false ->
             {next_state, election, State}
     end;
-election({'DOWN', _, _, _, _}, State) ->
-    election(init, State);
 election(Msg, State) ->
     common(Msg, State, election).
 
@@ -629,9 +590,16 @@ prelead(Msg, From, State) ->
 leading(init, State=#state{id=_Id}) ->
     ?OUT("~p: Leading~n", [_Id]),
     _ = lager:info("~p: Leading~n", [_Id]),
-    leading(tick, State#state{alive=?ALIVE});
+    start_exchange(State),
+    leading(tick, State#state{alive=?ALIVE, tree_ready=false});
 leading(tick, State) ->
     leader_tick(State);
+leading(exchange_complete, State) ->
+    %% io:format(user, "~p: ~p leader trusted!~n", [os:timestamp(), State#state.id]),
+    State2 = State#state{tree_trust=true, tree_ready=true},
+    {next_state, leading, State2};
+leading(exchange_failed, State) ->
+    step_down(State);
 leading({forward, From, Msg}, State) ->
     case leading(Msg, From, State) of
         %% {reply, Reply, StateName, State2} ->
@@ -670,7 +638,8 @@ leading(check_quorum, From, State) ->
             send_reply(From, timeout),
             step_down(State2)
     end;
-leading(ping_quorum, From, State=#state{fact=Fact, id=Id, members=Members}) ->
+leading(ping_quorum, From, State=#state{fact=Fact, id=Id, members=Members,
+                                        tree_ready=TreeReady}) ->
     NewFact = increment_sequence(Fact),
     State2 = local_commit(NewFact, State),
     {Future, State3} = blocking_send_all({commit, NewFact}, State2),
@@ -689,9 +658,20 @@ leading(ping_quorum, From, State=#state{fact=Fact, id=Id, members=Members}) ->
                                         %% io:format("timeout~n"),
                                         Extra
                                 end,
-                       gen_fsm:reply(From, {Id, Result})
+                       gen_fsm:reply(From, {Id, TreeReady, Result})
                end),
     {next_state, leading, State3};
+leading(stable_views, _From, State=#state{fact=Fact}) ->
+    #fact{pending=Pending, views=Views} = Fact,
+    Reply = case {Pending, Views} of
+                {undefined, [_]} ->
+                    {ok, true};
+                {{_, []}, [_]} ->
+                    {ok, true};
+                _ ->
+                    {ok, false}
+            end,
+    {reply, Reply, leading, State};
 leading(Msg, From, State) ->
     case leading_kv(Msg, From, State) of
         false ->
@@ -776,8 +756,15 @@ following(not_ready, State) ->
     following(init, State#state{ready=false});
 following(init, State) ->
     ?OUT("~p: Following: ~p~n", [State#state.id, leader(State)]),
+    start_exchange(State),
     State2 = reset_follower_timer(State),
     {next_state, following, State2};
+following(exchange_complete, State) ->
+    %% io:format(user, "~p: ~p follower trusted!~n", [os:timestamp(), State#state.id]),
+    State2 = State#state{tree_trust=true},
+    {next_state, following, State2};
+following(exchange_failed, State) ->
+    probe(init, State);
 following({commit, Fact, From}, State) ->
     State3 = case Fact#fact.epoch >= epoch(State) of
                  true ->
@@ -882,6 +869,8 @@ step_down(Next, State) ->
             probe(init, State3);
         prepare ->
             prepare(init, State3);
+        repair ->
+            repair(init, State3);
         stop ->
             {stop, normal, State3}
     end.
@@ -955,18 +944,17 @@ views(State) ->
 common({probe, From}, State=#state{fact=Fact}, StateName) ->
     reply(From, Fact, State),
     {next_state, StateName, State};
-common({sync, From}, State, StateName) ->
-    State2 = case State#state.trust of
-                 true ->
-                     mod_sync_request(From, State);
-                 false ->
-                     reply(From, nack, State),
-                     State
-             end,
-    {next_state, StateName, State2};
-common({all_sync, From}, State, StateName) ->
-    State2 = mod_sync_request(From, State),
-    {next_state, StateName, State2};
+common({exchange, From}, State, StateName) ->
+    case State#state.tree_trust of
+        true ->
+            reply(From, ok, State);
+        false ->
+            reply(From, nack, State)
+    end,
+    {next_state, StateName, State};
+common({all_exchange, From}, State, StateName) ->
+    reply(From, ok, State),
+    {next_state, StateName, State};
 common(tick, State, StateName) ->
     %% TODO: Fix it so we don't have errant tick messages
     {next_state, StateName, State};
@@ -975,6 +963,9 @@ common({forward, _From, _Msg}, State, StateName) ->
 common(backend_pong, State, StateName) ->
     State2 = State#state{alive=?ALIVE},
     {next_state, StateName, State2};
+common({update_hash, _, _, MaybeFrom}, State, StateName) ->
+    maybe_reply(MaybeFrom, nack, State),
+    {next_state, StateName, State};
 common(Msg, State, StateName) ->
     ?OUT("~p: ~s/ignoring: ~p~n", [State#state.id, StateName, Msg]),
     %% io:format("~p/~p: ~s/ignoring: ~p~n", [State#state.id, self(), StateName, Msg]),
@@ -986,6 +977,12 @@ common({force_state, {Epoch, Seq}}, From, State, StateName) ->
     State2 = set_epoch(Epoch, set_seq(Seq, State)),
     gen_fsm:reply(From, ok),
     {next_state, StateName, State2};
+common(tree_pid, From, State, StateName) ->
+    gen_fsm:reply(From, State#state.tree),
+    {next_state, StateName, State};
+common(tree_corrupted, From, State, _StateName) ->
+    gen_fsm:reply(From, ok),
+    repair(init, State);
 common(_Msg, From, State, StateName) ->
     ?OUT("~p: ~s/ignoring: ~p~n", [State#state.id, StateName, _Msg]),
     send_reply(From, nack),
@@ -1215,28 +1212,40 @@ unpause_workers(#state{workers=Workers, ets=ETS}) ->
     ok = riak_ensemble_peer_worker:unpause_workers(tuple_to_list(Workers), ETS).
 
 -spec leading_kv(_,_,_) -> false | next_state().
-leading_kv({get, Key}, From, State) ->
+leading_kv({get, _Key, _Opts}, From, State=#state{tree_ready=false}) ->
+    fail_request(From, State);
+leading_kv({get, Key, Opts}, From, State) ->
     Self = self(),
-    async(Key, State, fun() -> do_get_fsm(Key, From, Self, State) end),
+    async(Key, State, fun() -> do_get_fsm(Key, From, Self, Opts, State) end),
     {next_state, leading, State};
 leading_kv(request_failed, _From, State) ->
     step_down(prepare, State);
+leading_kv(tree_corrupted, _From, State) ->
+    step_down(repair, State#state{tree_trust=false});
 leading_kv({local_get, Key}, From, State) ->
     State2 = do_local_get(From, Key, State),
     {next_state, leading, State2};
 leading_kv({local_put, Key, Obj}, From, State) ->
     State2 = do_local_put(From, Key, Obj, State),
     {next_state, leading, State2};
+leading_kv({put, _Key, _Fun, _Args}, From, State=#state{tree_ready=false}) ->
+    fail_request(From, State);
 leading_kv({put, Key, Fun, Args}, From, State) ->
     Self = self(),
     async(Key, State, fun() -> do_put_fsm(Key, Fun, Args, From, Self, State) end),
     {next_state, leading, State};
+leading_kv({overwrite, _Key, _Val}, From, State=#state{tree_ready=false}) ->
+    fail_request(From, State);
 leading_kv({overwrite, Key, Val}, From, State) ->
     Self = self(),
     async(Key, State, fun() -> do_overwrite_fsm(Key, Val, From, Self, State) end),
     {next_state, leading, State};
 leading_kv(_, _From, _State) ->
     false.
+
+fail_request(From, State) ->
+    send_reply(From, failed),
+    {next_state, leading, State}.
 
 -spec following_kv(_,_) -> false | {next_state,following,state()}.
 following_kv({get, Key, Peer, Epoch, From}, State) ->
@@ -1269,11 +1278,21 @@ following_kv({put, Key, Obj, Peer, Epoch, From}, State) ->
             reply(From, nack, State),
             {next_state, following, State}
     end;
+following_kv({update_hash, Key, ObjHash, MaybeFrom}, State) ->
+    %% TODO: Should this be async?
+    case update_hash(Key, ObjHash, State) of
+        {corrupted, State2} ->
+            maybe_reply(MaybeFrom, nack, State),
+            repair(init, State2);
+        {ok, State2} ->
+            maybe_reply(MaybeFrom, ok, State),
+            {next_state, following, State2}
+    end;
 following_kv(_, _State) ->
     false.
 
 -spec following_kv(_,_,_) -> false | {next_state,following,state()}.
-following_kv({get, _Key}=Msg, From, State) ->
+following_kv({get, _Key, _Opts}=Msg, From, State) ->
     forward(Msg, From, State);
 following_kv({put, _Key, _Fun, _Args}=Msg, From, State) ->
     forward(Msg, From, State);
@@ -1294,11 +1313,21 @@ send_reply(From, Reply) ->
     gen_fsm:reply(From, Reply),
     ok.
 
-do_put_fsm(Key, Fun, Args, From, Self, State) ->
+do_put_fsm(Key, Fun, Args, From, Self, State=#state{tree=Tree}) ->
+    case riak_ensemble_peer_tree:get(Key, Tree) of
+        corrupted ->
+            %% io:format("Tree corrupted (put)!~n"),
+            send_reply(From, failed),
+            gen_fsm:sync_send_event(Self, tree_corrupted, infinity);
+        KnownHash ->
+            do_put_fsm(Key, Fun, Args, From, Self, KnownHash, State)
+    end.
+
+do_put_fsm(Key, Fun, Args, From, Self, KnownHash, State) ->
     %% TODO: Timeout should be configurable per request
     Local = local_get(Self, Key, ?LOCAL_GET_TIMEOUT),
     State2 = State#state{self=Self},
-    case is_current(Local, State2) of
+    case is_current(Local, Key, KnownHash, State2) of
         local_timeout ->
             %% TODO: Should this send a request_failed?
             %% gen_fsm:sync_send_event(Self, request_failed, infinity),
@@ -1306,9 +1335,12 @@ do_put_fsm(Key, Fun, Args, From, Self, State) ->
         true ->
             do_modify_fsm(Key, Local, Fun, Args, From, State2);
         false ->
-            case update_key(Key, Local, State2) of
+            case update_key(Key, Local, KnownHash, State2) of
                 {ok, Current, _State3} ->
                     do_modify_fsm(Key, Current, Fun, Args, From, State2);
+                {corrupted, _State2} ->
+                    send_reply(From, failed),
+                    gen_fsm:sync_send_event(Self, tree_corrupted, infinity);
                 {failed, _State3} ->
                     gen_fsm:sync_send_event(Self, request_failed, infinity),
                     send_reply(From, unavailable)
@@ -1320,6 +1352,9 @@ do_modify_fsm(Key, Current, Fun, Args, From, State=#state{self=Self}) ->
     case modify_key(Key, Current, Fun, Args, State) of
         {ok, New, _State2} ->
             send_reply(From, {ok, New});
+        {corrupted, _State2} ->
+            send_reply(From, failed),
+            gen_fsm:sync_send_event(Self, tree_corrupted, infinity);
         {precondition, _State2} ->
             send_reply(From, failed);
         {failed, _State2} ->
@@ -1335,40 +1370,83 @@ do_overwrite_fsm(Key, Val, From, Self, State0=#state{ets=ETS}) ->
     case put_obj(Key, Obj, State) of
         {ok, Result, _State2} ->
             send_reply(From, {ok, Result});
+        {corrupted, _State2} ->
+            send_reply(From, timeout),
+            gen_fsm:sync_send_event(Self, tree_corrupted, infinity);
         {failed, _State2} ->
             gen_fsm:sync_send_event(Self, request_failed, infinity),
             send_reply(From, timeout)
     end.
 
--spec do_get_fsm(_,{_,_},pid(),state()) -> ok.
-do_get_fsm(Key, From, Self, State0) ->
+-spec do_get_fsm(_,{_,_},pid(),_,state()) -> ok.
+do_get_fsm(Key, From, Self, Opts, State=#state{tree=Tree}) ->
+    case riak_ensemble_peer_tree:get(Key, Tree) of
+        corrupted ->
+            %% io:format("Tree corrupted (get)!~n"),
+            send_reply(From, failed),
+            gen_fsm:sync_send_event(Self, tree_corrupted, infinity);
+        KnownHash ->
+            do_get_fsm(Key, From, Self, KnownHash, Opts, State)
+    end.
+
+-spec do_get_fsm(_,{_,_},pid(),_,_,state()) -> ok.
+do_get_fsm(Key, From, Self, KnownHash, Opts, State0) ->
     State = State0#state{self=Self},
     Local = local_get(Self, Key, ?LOCAL_GET_TIMEOUT),
     %% TODO: Allow get to return errors. Make consistent with riak_kv_vnode
     %% TODO: Returning local directly only works if we ensure leader lease
-    case is_current(Local, State) of
+    LocalOnly = not lists:member(read_repair, Opts),
+    case is_current(Local, Key, KnownHash, State) of
         local_timeout ->
             %% TODO: Should this send a request_failed?
             %% gen_fsm:sync_send_event(Self, request_failed, infinity),
             send_reply(From, timeout);
         true ->
-            send_reply(From, {ok, Local});
-            %% case get_latest_obj(Key, Local, State2) of
-            %%     {ok, Latest, State3} ->
-            %%         {ok, Latest, State3};
-            %%     {failed, State3} ->
-            %%         {failed, State3}
-            %% end;
+            case LocalOnly of
+                true ->
+                    send_reply(From, {ok, Local});
+                false ->
+                    case get_latest_obj(Key, Local, KnownHash, State) of
+                        {ok, Latest, Replies, _State2} ->
+                            maybe_repair(Key, Latest, Replies, State),
+                            send_reply(From, {ok, Latest});
+                        {failed, _State2} ->
+                            send_reply(From, timeout)
+                    end
+            end;
         false ->
             ?OUT("~p :: not current~n", [Key]),
-            case update_key(Key, Local, State) of
+            case update_key(Key, Local, KnownHash, State) of
                 {ok, Current, _State2} ->
                     send_reply(From, {ok, Current});
+                {corrupted, _State2} ->
+                    send_reply(From, failed),
+                    gen_fsm:sync_send_event(Self, tree_corrupted, infinity);
                 {failed, _State2} ->
                     %% TODO: Should this be failed or unavailable?
-                    gen_fsm:sync_send_event(Self, request_failed, infinity),
-                    send_reply(From, failed)
+                    send_reply(From, failed),
+                    gen_fsm:sync_send_event(Self, request_failed, infinity)
             end
+    end.
+
+maybe_repair(Key, Latest, Replies, State=#state{id=Id}) ->
+    %% TODO: Should only send puts to peers that are actually divergent.
+    ShouldRepair = lists:any(fun({_, nack}) ->
+                                     false;
+                                ({_Peer, Obj}) when (Obj =:= Latest) ->
+                                     false;
+                                ({_Peer, _Obj}) ->
+                                     true
+                             end, Replies),
+    case ShouldRepair of
+        true ->
+            %% TODO: Following is kinda ugly, but works without code change.
+            Epoch = epoch(State),
+            Dummy = spawn(fun() -> ok end),
+            DummyFrom = {Dummy, undefined},
+            ok = cast_all({put, Key, Latest, Id, Epoch, DummyFrom}, State);
+        false ->
+            ok
     end.
 
 -spec do_local_get(_, _, state()) -> state().
@@ -1383,22 +1461,29 @@ do_local_put(From, Key, Value, State) ->
     State2 = mod_put(Key, Value, From, State),
     State2.
 
--spec is_current(maybe_obj(), state()) -> false | local_timeout | true.
-is_current(timeout, _State) ->
+-spec is_current(maybe_obj(), key(), _, state()) -> false | local_timeout | true.
+is_current(timeout, _Key, _KnownHash, _State) ->
     local_timeout;
-is_current(notfound, _State) ->
+is_current(notfound, _Key, _KnownHash, _State) ->
     false;
-is_current(Obj, State) ->
-    Epoch = get_obj(epoch, Obj, State),
-    Epoch =:= epoch(State).
+is_current(Obj, Key, KnownHash, State) ->
+    case verify_hash(Key, Obj, KnownHash, State) of
+        true ->
+            Epoch = get_obj(epoch, Obj, State),
+            Epoch =:= epoch(State);
+        false ->
+            false
+    end.
 
--spec update_key(_,_,state()) -> {ok, obj(), state()} | {failed,state()}.
-update_key(Key, Local, State) ->
-    case get_latest_obj(Key, Local, State) of
-        {ok, Latest, State2} ->
+-spec update_key(_,_,_,state()) -> {ok, obj(), state()} | {failed,state()} | {corrupted,state()}.
+update_key(Key, Local, KnownHash, State) ->
+    case get_latest_obj(Key, Local, KnownHash, State) of
+        {ok, Latest, _Replies, State2} ->
             case put_obj(Key, Latest, State2) of
                 {ok, New, State3} ->
                     {ok, New, State3};
+                {corrupted, State3} ->
+                    {corrupted, State3};
                 {failed, State3} ->
                     {failed, State3}
             end;
@@ -1422,6 +1507,8 @@ modify_key(Key, Current, Fun, Args, State) ->
             case put_obj(Key, New, Seq, State) of
                 {ok, Result, State2} ->
                     {ok, Result, State2};
+                {corrupted, State2} ->
+                    {corrupted, State2};
                 {failed, State2} ->
                     {failed, State2}
             end;
@@ -1429,31 +1516,55 @@ modify_key(Key, Current, Fun, Args, State) ->
             {precondition, State}
     end.
 
--spec get_latest_obj(_,_,state()) -> {ok, obj(), state()} | {failed, state()}.
-get_latest_obj(Key, Local, State=#state{id=Id, members=Members}) ->
+-spec get_latest_obj(_,_,_,state()) -> {ok, obj(), _, state()} | {failed, state()}.
+get_latest_obj(Key, Local, KnownHash, State=#state{id=Id, members=Members}) ->
     Epoch = epoch(State),
     Peers = get_peers(Members, State),
-    {Future, State2} = blocking_send_all({get, Key, Id, Epoch}, Peers, State),
+    %% In addition to meeting quorum, we must know of at least one object
+    %% that is valid according to the object hash.
+    Check = fun(Replies) ->
+                    T = lists:any(fun({_, nack}) ->
+                                          false;
+                                     ({_, notfound}) ->
+                                          KnownHash =:= notfound;
+                                     ({_, Obj}) ->
+                                          ObjHash = get_obj_hash(Key, Obj, State),
+                                          valid_obj_hash(ObjHash, KnownHash)
+                                  end, Replies),
+                    T
+            end,
+    Check2 = case verify_hash(Key, Local, KnownHash, State) of
+                 true ->
+                     undefined;
+                 false ->
+                     Check
+             end,
+    {Future, State2} = blocking_send_all({get, Key, Id, Epoch}, Peers, quorum, Check2, State),
     case wait_for_quorum(Future) of
         {quorum_met, Replies} ->
             Latest = latest_obj(Replies, Local, State),
-            {ok, Latest, State2};
+            case verify_hash(Key, Latest, KnownHash, State) of
+                true ->
+                    {ok, Latest, Replies, State2};
+                false ->
+                    {failed, State2}
+            end;
         {timeout, _Replies} ->
             {failed, State2}
     end.
 
--spec put_obj(_,obj(),state()) -> {ok, obj(), state()} | {failed,state()}.
+-spec put_obj(_,obj(),state()) -> {ok, obj(), state()} | {failed,state()} | {corrupted,state()}.
 put_obj(Key, Obj, State) ->
     Seq = obj_sequence(State),
     put_obj(Key, Obj, Seq, State).
 
--spec put_obj(_,obj(),seq(),state()) -> {ok, obj(), state()} | {failed,state()}.
+-spec put_obj(_,obj(),seq(),state()) -> {ok, obj(), state()} | {failed,state()} | {corrupted,state()}.
 put_obj(Key, Obj, Seq, State=#state{id=Id, members=Members, self=Self}) ->
     Epoch = epoch(State),
     Obj2 = increment_obj(Key, Obj, Seq, State),
     Peers = get_peers(Members, State),
     {Future, State2} = blocking_send_all({put, Key, Obj2, Id, Epoch}, Peers, State),
-    case local_put(Self, Key, Obj2, infinity) of
+    case local_put(Self, Key, Obj2, ?LOCAL_PUT_TIMEOUT) of
         failed ->
             lager:warning("Failed local_put for Key ~p, Id = ~p", [Key, Id]),
             gen_fsm:sync_send_event(Self, request_failed, infinity),
@@ -1461,9 +1572,85 @@ put_obj(Key, Obj, Seq, State=#state{id=Id, members=Members, self=Self}) ->
         Local ->
             case wait_for_quorum(Future) of
                 {quorum_met, _Replies} ->
-                    {ok, Local, State2};
+                    ObjHash = get_obj_hash(Key, Local, State2),
+                    case update_hash(Key, ObjHash, State2) of
+                        {ok, State3} ->
+                            case send_update_hash(Key, ObjHash, State3) of
+                                {ok, State4} ->
+                                    {ok, Local, State4};
+                                {failed, State4} ->
+                                    {failed, State4}
+                            end;
+                        {corrupted, State3} ->
+                            {corrupted, State3}
+                    end;
                 {timeout, _Replies} ->
                     {failed, State2}
+            end
+    end.
+
+send_update_hash(Key, ObjHash, State) ->
+    case riak_ensemble_config:synchronous_tree_updates() of
+        false ->
+            Msg = {update_hash, Key, ObjHash, undefined},
+            cast_all(Msg, State),
+            {ok, State};
+        true ->
+            Msg = {update_hash, Key, ObjHash},
+            {Future, State2} = blocking_send_all(Msg, State),
+            case wait_for_quorum(Future) of
+                {quorum_met, _Replies} ->
+                    {ok, State2};
+                {timeout, _Replies} ->
+                    {failed, State2}
+            end
+    end.
+
+get_obj_hash(_Key, Obj, State) ->
+    ObjEpoch = get_obj(epoch, Obj, State),
+    ObjSeq = get_obj(seq, Obj, State),
+    %% TODO: For now, we simply store the epoch/sequence and rely upon
+    %%       backend CRCs to ensure objects with the proper epoch/seq
+    %%       have the proper data. In the future, we should support
+    %%       actual hashing here for stronger guarantees.
+    <<?H_OBJ_NONE, ObjEpoch:64/integer, ObjSeq:64/integer>>.
+
+valid_obj_hash(ActualHash = <<?H_OBJ_NONE, _/binary>>,
+               KnownHash  = <<?H_OBJ_NONE, _/binary>>) ->
+    %% No actual hash to verify, just ensure epoch/seq is equal or newer
+    ActualHash >= KnownHash.
+
+update_hash(Key, ObjHash, State=#state{tree=Tree}) ->
+    case riak_ensemble_peer_tree:insert(Key, ObjHash, Tree) of
+        corrupted ->
+            %% io:format("Tree corrupted (update_hash)!~n"),
+            {corrupted, State};
+        ok ->
+            {ok, State}
+    end.
+
+verify_hash(Key, notfound, KnownHash, _State) ->
+    case KnownHash of
+        notfound ->
+            true;
+        _ ->
+            lager:warning("~p detected as corrupted", [Key]),
+            false
+    end;
+verify_hash(Key, Obj, KnownHash, State) ->
+    ObjHash = get_obj_hash(Key, Obj, State),
+    case KnownHash of
+        notfound ->
+            %% An existing object is by definition newer than notfound.
+            true;
+        _ ->
+            case valid_obj_hash(ObjHash, KnownHash) of
+                true ->
+                    true;
+                false ->
+                    lager:warning("~p detected as corrupted :: ~p",
+                                  [Key, {ObjHash, KnownHash}]),
+                    false
             end
     end.
 
@@ -1527,11 +1714,17 @@ init([Mod, Ensemble, Id, Args]) ->
                     B + erlang:phash2(node()),
                     C),
     ETS = ets:new(x, [public, {read_concurrency, true}, {write_concurrency, true}]),
+    TreeTrust = case riak_ensemble_config:tree_validation() of
+                    false ->
+                        true;
+                    _ ->
+                        false
+                end,
     State = #state{id=Id,
                    ensemble=Ensemble,
                    ets=ETS,
                    peers=[],
-                   trust=false,
+                   tree_trust=TreeTrust,
                    alive=?ALIVE,
                    mod=Mod},
     gen_fsm:send_event(self(), {init, Args}),
@@ -1540,18 +1733,20 @@ init([Mod, Ensemble, Id, Args]) ->
 
 setup({init, Args}, State0=#state{id=Id, ensemble=Ensemble, ets=ETS, mod=Mod}) ->
     NumWorkers = ?WORKERS,
+    {TreeId, Path} = mod_synctree(State0),
+    Tree = open_hashtree(Ensemble, Id, TreeId, Path),
     Saved = reload_fact(Ensemble, Id),
     Workers = start_workers(NumWorkers, ETS),
     Members = compute_members(Saved#fact.views),
     State = State0#state{workers=list_to_tuple(Workers),
+                         tree=Tree,
                          fact=Saved,
                          members=Members,
                          modstate=riak_ensemble_backend:start(Mod, Ensemble, Id, Args)},
     State2 = check_views(State),
     %% TODO: Why are we local commiting on startup?
     State3 = local_commit(State2#state.fact, State2),
-    State4 = mod_trusted(State3),
-    probe(init, State4).
+    probe(init, State3).
 
 -spec handle_event(_, atom(), state()) -> {next_state, atom(), state()}.
 handle_event({reply, ReqId, Peer, Reply}, StateName, State) ->
@@ -1569,7 +1764,7 @@ handle_event(_Event, StateName, State) ->
                                                   {stop, normal, ok, state()}.
 handle_sync_event(get_leader, _From, StateName, State) ->
     {reply, leader(State), StateName, State};
-handle_sync_event(get_info, _From, StateName, State=#state{trust=Trust}) ->
+handle_sync_event(get_info, _From, StateName, State=#state{tree_trust=Trust}) ->
     Epoch = epoch(State),
     Info = {StateName, Trust, Epoch},
     {reply, Info, StateName, State};
@@ -1578,18 +1773,6 @@ handle_sync_event(_Event, _From, StateName, State) ->
     {reply, Reply, StateName, State}.
 
 %% -spec handle_info(_, atom(), state()) -> next_state().
-handle_info({'DOWN', _, _, Pid, _Reason}, StateName, State)
-  when (Pid =:= State#state.trust_pid) ->
-    State2 = mod_trusted(State),
-    case State2#state.trust of
-        true ->
-            {next_state, StateName, State2};
-        false when (StateName =:= leading) ->
-            step_down(State2);
-        false ->
-            State3 = cancel_timer(State2),
-            probe(init, State3)
-    end;
 handle_info({'DOWN', Ref, _, Pid, Reason}, StateName,
   #state{mod=Mod, modstate=ModState}=State) ->
     case Mod:handle_down(Ref, Pid, Reason, ModState) of
@@ -1620,16 +1803,17 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
+-spec cast_all(_, state()) -> ok.
+cast_all(Msg, State=#state{id=Id, members=Members}) ->
+    Peers = get_peers(Members, State),
+    riak_ensemble_msg:cast_all(Msg, Id, Peers).
+
 -spec send_all(_,state()) -> state().
 send_all(Msg, State) ->
     send_all(Msg, quorum, State).
 
 send_all(Msg, Required, State=#state{members=Members}) ->
     send_peers(Msg, Members, Required, State).
-
-send_peers(Msg, Members, State) ->
-    Views = [Members],
-    send_peers(Msg, Members, all, Views, State).
 
 send_peers(Msg, Members, Required, State) ->
     Views = views(State),
@@ -1646,9 +1830,20 @@ blocking_send_all(Msg, State=#state{members=Members}) ->
     blocking_send_all(Msg, Peers, State).
 
 -spec blocking_send_all(any(), peer_pids(), state()) -> {riak_ensemble_msg:future(), state()}.
-blocking_send_all(Msg, Peers, State=#state{id=Id}) ->
+blocking_send_all(Msg, Peers, State) ->
+    blocking_send_all(Msg, Peers, quorum, State).
+
+-spec blocking_send_all(any(), peer_pids(), _, state()) -> Result when
+      Result :: {riak_ensemble_msg:future(), state()}.
+blocking_send_all(Msg, Peers, Required, State) ->
+    blocking_send_all(Msg, Peers, Required, undefined, State).
+
+-spec blocking_send_all(any(), peer_pids(), _, Extra, state()) -> Result when
+      Extra  :: riak_ensemble_msg:extra_check(),
+      Result :: {riak_ensemble_msg:future(), state()}.
+blocking_send_all(Msg, Peers, Required, Extra, State=#state{id=Id}) ->
     Views = views(State),
-    {Future, Awaiting} = riak_ensemble_msg:blocking_send_all(Msg, Id, Peers, Views),
+    {Future, Awaiting} = riak_ensemble_msg:blocking_send_all(Msg, Id, Peers, Views, Required, Extra),
     State2 = State#state{awaiting=Awaiting},
     {Future, State2}.
 
@@ -1662,6 +1857,11 @@ quorum_timeout(State=#state{awaiting=undefined}) ->
 quorum_timeout(State=#state{awaiting=Awaiting}) ->
     Awaiting2 = riak_ensemble_msg:quorum_timeout(Awaiting),
     State#state{awaiting=Awaiting2}.
+
+maybe_reply(undefined, _, _) ->
+    ok;
+maybe_reply(From, Reply, State) ->
+    reply(From, Reply, State).
 
 -spec reply(riak_ensemble_msg:msg_from(), any(), state()) -> ok.
 reply(From, Reply, #state{id=Id}) ->
@@ -1733,15 +1933,6 @@ peer(Id, #state{ensemble=Ensemble}) ->
 %%% Behaviour Interface
 %%%===================================================================
 
-mod_trusted(State=#state{mod=Mod, modstate=ModState}) ->
-    case Mod:trusted(ModState) of
-        {Trust, Pid} ->
-            _ = monitor(process, Pid),
-            State#state{trust=Trust, trust_pid=Pid};
-        Trust ->
-            State#state{trust=Trust}
-    end.
-
 mod_ping(State=#state{mod=Mod, modstate=ModState, alive=Alive}) ->
     {Result, ModState2} = Mod:ping(self(), ModState),
     {Reply, Alive2} = case Result of
@@ -1770,18 +1961,6 @@ mod_put(Key, Obj, From, State=#state{mod=Mod, modstate=ModState, id=Id}) ->
     ModState2 = Mod:put(Key, Obj, {From, Id}, ModState),
     State#state{modstate=ModState2}.
 
-mod_sync_request(From, State=#state{mod=Mod, modstate=ModState, id=Id}) ->
-    ModState2 = Mod:sync_request({From, Id}, ModState),
-    State#state{modstate=ModState2}.
-
--spec mod_sync([any()], state()) -> {ok, state()}       |
-                                    {async, state()}    |
-                                    {{error,_}, state()}.
-mod_sync(Replies, State=#state{mod=Mod, modstate=ModState}) ->
-    {Reply, ModState2} = Mod:sync(Replies, ModState),
-    State2 = State#state{modstate=ModState2},
-    {Reply, State2}.
-
 -spec new_obj(_,_,_,_,state()) -> any().
 new_obj(Epoch, Seq, Key, Value, #state{mod=Mod, modstate=_ModState}) ->
     Mod:new_obj(Epoch, Seq, Key, Value).
@@ -1794,7 +1973,35 @@ get_obj(X, Obj, #state{mod=Mod, modstate=_ModState}) ->
 set_obj(X, Val, Obj, #state{mod=Mod, modstate=_ModState}) ->
     riak_ensemble_backend:set_obj(Mod, X, Val, Obj).
 
+mod_synctree(#state{ensemble=Ensemble, id=Id, mod=Mod}) ->
+    {TreeId, Base} = case Mod:synctree_path(Ensemble, Id) of
+                         default ->
+                             {<<>>, default_path(Ensemble, Id)};
+                         {_, _}=Result ->
+                             Result
+                     end,
+    {TreeId, full_path(Base)}.
+
+default_path(Ensemble, Id) ->
+    <<Name:160/integer>> = crypto:hash(sha, term_to_binary({Ensemble, Id})),
+    integer_to_list(Name).
+
+full_path(Base) ->
+    {ok, Root} = application:get_env(riak_ensemble, data_root),
+    filename:join([Root, "ensembles", "trees", Base]).
+
 %%%===================================================================
+
+open_hashtree(Ensemble, Id, TreeId, Path) ->
+    %% TODO: Move retry logic into riak_ensemble_peer_tree itself?
+    try
+        {ok, Pid} = riak_ensemble_peer_tree:start_link({Ensemble, Id}, TreeId, Path),
+        Pid
+    catch A:B ->
+            lager:info("Failed to open hashtree: ~p/~p", [A,B]),
+            timer:sleep(1000),
+            open_hashtree(Ensemble, Id, TreeId, Path)
+    end.
 
 -spec reload_fact(_,_) -> any().
 reload_fact(Ensemble, Id) ->
