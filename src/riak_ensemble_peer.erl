@@ -962,8 +962,8 @@ common({forward, _From, _Msg}, State, StateName) ->
 common(backend_pong, State, StateName) ->
     State2 = State#state{alive=?ALIVE},
     {next_state, StateName, State2};
-common({update_hash, _, _}, State, StateName) ->
-    %% just ignore, no reply expected
+common({update_hash, _, _, MaybeFrom}, State, StateName) ->
+    maybe_reply(MaybeFrom, nack, State),
     {next_state, StateName, State};
 common(Msg, State, StateName) ->
     ?OUT("~p: ~s/ignoring: ~p~n", [State#state.id, StateName, Msg]),
@@ -1277,12 +1277,14 @@ following_kv({put, Key, Obj, Peer, Epoch, From}, State) ->
             reply(From, nack, State),
             {next_state, following, State}
     end;
-following_kv({update_hash, Key, ObjHash}, State) ->
+following_kv({update_hash, Key, ObjHash, MaybeFrom}, State) ->
     %% TODO: Should this be async?
     case update_hash(Key, ObjHash, State) of
         {corrupted, State2} ->
+            maybe_reply(MaybeFrom, nack, State),
             repair(init, State2);
         {ok, State2} ->
+            maybe_reply(MaybeFrom, ok, State),
             {next_state, following, State2}
     end;
 following_kv(_, _State) ->
@@ -1572,13 +1574,32 @@ put_obj(Key, Obj, Seq, State=#state{id=Id, members=Members, self=Self}) ->
                     ObjHash = get_obj_hash(Key, Local, State2),
                     case update_hash(Key, ObjHash, State2) of
                         {ok, State3} ->
-                            %% TODO: Need to implement synchronous update_hash
-                            %%       for high paranoia/byzantine tolerance.
-                            cast_all({update_hash, Key, ObjHash}, State3),
-                            {ok, Local, State3};
+                            case send_update_hash(Key, ObjHash, State3) of
+                                {ok, State4} ->
+                                    {ok, Local, State4};
+                                {failed, State4} ->
+                                    {failed, State4}
+                            end;
                         {corrupted, State3} ->
                             {corrupted, State3}
                     end;
+                {timeout, _Replies} ->
+                    {failed, State2}
+            end
+    end.
+
+send_update_hash(Key, ObjHash, State) ->
+    case riak_ensemble_config:synchronous_tree_updates() of
+        false ->
+            Msg = {update_hash, Key, ObjHash, undefined},
+            cast_all(Msg, State),
+            {ok, State};
+        true ->
+            Msg = {update_hash, Key, ObjHash},
+            {Future, State2} = blocking_send_all(Msg, State),
+            case wait_for_quorum(Future) of
+                {quorum_met, _Replies} ->
+                    {ok, State2};
                 {timeout, _Replies} ->
                     {failed, State2}
             end
@@ -1829,6 +1850,11 @@ quorum_timeout(State=#state{awaiting=undefined}) ->
 quorum_timeout(State=#state{awaiting=Awaiting}) ->
     Awaiting2 = riak_ensemble_msg:quorum_timeout(Awaiting),
     State#state{awaiting=Awaiting2}.
+
+maybe_reply(undefined, _, _) ->
+    ok;
+maybe_reply(From, Reply, State) ->
+    reply(From, Reply, State).
 
 -spec reply(riak_ensemble_msg:msg_from(), any(), state()) -> ok.
 reply(From, Reply, #state{id=Id}) ->

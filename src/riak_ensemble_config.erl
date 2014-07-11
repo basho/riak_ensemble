@@ -86,6 +86,12 @@ storage_delay() ->
 storage_tick() ->
     get_env(storage_tick, 5000).
 
+%% @doc
+%% Determines if remote synctree updates are performed synchronously.
+%% When true, tree updates are performed before replying to the user.
+synchronous_tree_updates() ->
+    get_env(synchronous_tree_updates, false).
+
 get_env(Key, Default) ->
     case application:get_env(riak_ensemble, Key) of
         undefined ->
