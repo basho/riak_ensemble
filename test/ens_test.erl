@@ -12,7 +12,7 @@ run(Test, Timeout) ->
              application:load(riak_ensemble),
              os:cmd("rm -rf test-tmp"),
              application:set_env(riak_ensemble, data_root, "test-tmp"),
-             ok = application:start(riak_ensemble),
+             {ok, _} = application:ensure_all_started(riak_ensemble),
              ok
      end,
      fun(_) ->
