@@ -21,7 +21,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/2]).
+-export([start_link/3]).
 -export([get/2,
          insert/3,
          rehash_upper/1,
@@ -55,8 +55,8 @@
 %% corrupted or {error, corrupted}. As is, any() | corrupted reduces
 %% to any() which gives us zero dialyzer benefits.
 
-start_link(Id, Path) ->
-    gen_server:start_link(?MODULE, [Id, Path], []).
+start_link(Id, TreeId, Path) ->
+    gen_server:start_link(?MODULE, [Id, TreeId, Path], []).
 
 -spec get(_,pid()) -> any().
 get(Key, Pid) ->
@@ -132,8 +132,9 @@ async_repair(Pid) ->
 %%% gen_server callbacks
 %%%===================================================================
 
-init([Id, Path]) ->
-    Tree = synctree:newdb(Id, [{path, Path}]),
+init([Id, TreeId, Path]) ->
+    Tree = synctree:newdb(Id, [{path, Path},
+                               {tree_id, TreeId}]),
     State = #state{tree=Tree},
     {ok, State}.
 

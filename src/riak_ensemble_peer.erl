@@ -1699,7 +1699,8 @@ init([Mod, Ensemble, Id, Args]) ->
 
 setup({init, Args}, State0=#state{id=Id, ensemble=Ensemble, ets=ETS, mod=Mod}) ->
     NumWorkers = ?WORKERS,
-    Tree = open_hashtree(Ensemble, Id),
+    {TreeId, Path} = mod_synctree(State0),
+    Tree = open_hashtree(Ensemble, Id, TreeId, Path),
     Saved = reload_fact(Ensemble, Id),
     Workers = start_workers(NumWorkers, ETS),
     Members = compute_members(Saved#fact.views),
@@ -1933,21 +1934,34 @@ get_obj(X, Obj, #state{mod=Mod, modstate=_ModState}) ->
 set_obj(X, Val, Obj, #state{mod=Mod, modstate=_ModState}) ->
     riak_ensemble_backend:set_obj(Mod, X, Val, Obj).
 
+mod_synctree(#state{ensemble=Ensemble, id=Id, mod=Mod}) ->
+    {TreeId, Base} = case Mod:synctree_path(Ensemble, Id) of
+                         default ->
+                             {<<>>, default_path(Ensemble, Id)};
+                         {_, _}=Result ->
+                             Result
+                     end,
+    {TreeId, full_path(Base)}.
+
+default_path(Ensemble, Id) ->
+    <<Name:160/integer>> = crypto:hash(sha, term_to_binary({Ensemble, Id})),
+    integer_to_list(Name).
+
+full_path(Base) ->
+    {ok, Root} = application:get_env(riak_ensemble, data_root),
+    filename:join([Root, "ensembles", "trees", Base]).
+
 %%%===================================================================
 
-open_hashtree(Ensemble, Id) ->
-    %% TODO: Need to support sharing common LevelDB instance per vnode.
-    {ok, Root} = application:get_env(riak_ensemble, data_root),
-    <<Name:160/integer>> = crypto:hash(sha, term_to_binary({Ensemble, Id})),
-    Path = filename:join([Root, "ensembles", "trees", integer_to_list(Name)]),
+open_hashtree(Ensemble, Id, TreeId, Path) ->
     %% TODO: Move retry logic into riak_ensemble_peer_tree itself?
     try
-        {ok, Pid} = riak_ensemble_peer_tree:start_link({Ensemble, Id}, Path),
+        {ok, Pid} = riak_ensemble_peer_tree:start_link({Ensemble, Id}, TreeId, Path),
         Pid
     catch A:B ->
             lager:info("Failed to open hashtree: ~p/~p", [A,B]),
             timer:sleep(1000),
-            open_hashtree(Ensemble, Id)
+            open_hashtree(Ensemble, Id, TreeId, Path)
     end.
 
 -spec reload_fact(_,_) -> any().

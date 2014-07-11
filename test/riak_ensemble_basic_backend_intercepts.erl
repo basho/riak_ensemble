@@ -22,3 +22,10 @@ drop_put(Key, Obj, From, State=#state{id=Id}) ->
         _ ->
             ?M:put_orig(Key, Obj, From, State)
     end.
+
+synctree_path_shared(root, Id) ->
+    TreeId = term_to_binary(Id),
+    Path = "root",
+    {TreeId, Path};
+synctree_path_shared(_, _) ->
+    default.

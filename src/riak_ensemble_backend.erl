@@ -119,6 +119,19 @@
 %% Callback used to determine if peers using this backend can be started.
 -callback ready_to_start() -> boolean().
 
+%% Callback that allows a backend to override where a peer's synctree
+%% is stored. By default, each peer has an entirely independent on-disk
+%% synctree. Using this callback, a backend could do a M:1 or M:N
+%% style mapping where multiple peers share an on-disk tree.
+%%
+%% If this function does not return `default`, it must return a tuple
+%% where the first element is an unique tree-id (as a binary) and the
+%% second element is the filename for the synctree. Multiple trees
+%% stored in the same on-disk synctree will be internally partitioned
+%% using the provided tree-id.
+-callback synctree_path(ensemble_id(), peer_id()) -> default |
+                                                     {binary(), string()}.
+
 %%===================================================================
 
 start(Mod, Ensemble, Id, Args) ->
