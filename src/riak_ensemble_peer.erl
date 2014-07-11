@@ -799,8 +799,8 @@ following(follower_timeout, State) ->
     ?OUT("~p: follower_timeout from ~p~n", [State#state.id, leader(State)]),
     %% io:format("~p: follower_timeout from ~p~n", [State#state.id, leader(State)]),
     abandon(State#state{timer=undefined});
-following({check_epoch, Id, Epoch, From}, State) ->
-    case check_epoch(Id, Epoch, State) of
+following({check_epoch, Leader, Epoch, From}, State) ->
+    case check_epoch(Leader, Epoch, State) of
         true ->
             reply(From, ok, State);
         false ->
@@ -836,8 +836,8 @@ valid_request(Peer, ReqEpoch, State=#state{ready=Ready}) ->
     Ready and (ReqEpoch =:= epoch(State)) and (Peer =:= leader(State)).
 
 -spec check_epoch(peer_id(), epoch(), state()) -> boolean().
-check_epoch(Peer, Epoch, State) ->
-    (Epoch =:= epoch(State)) and (Peer =:= leader(State)).
+check_epoch(Leader, Epoch, State) ->
+    (Epoch =:= epoch(State)) and (Leader =:= leader(State)).
 
 -spec increment_epoch(fact() | state()) -> {pos_integer(), fact() | state()}.
 increment_epoch(Fact=#fact{epoch=Epoch}) ->

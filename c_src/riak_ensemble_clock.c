@@ -32,6 +32,10 @@
 static ERL_NIF_TERM ATOM_OK;
 static ERL_NIF_TERM ATOM_ERROR;
 
+#if defined(__MACH__) && defined(__APPLE__)
+static mach_timebase_info_data_t timebase_info;
+#endif
+
 /*********************************************************************/
 
 #if defined(_POSIX_TIMERS) && (_POSIX_TIMERS > 0)
@@ -84,13 +88,8 @@ uint64_t osx_monotonic_time(void)
 {
   uint64_t time;
   uint64_t timeNano;
-  static mach_timebase_info_data_t timebase_info;
 
   time = mach_absolute_time();
-
-  if(timebase_info.denom == 0) {
-    (void) mach_timebase_info(&timebase_info);
-  }
 
   // Do the maths. We hope that the multiplication doesn't 
   // overflow; the price you pay for working in fixed point.
@@ -152,6 +151,10 @@ static void init(ErlNifEnv *env)
 {
   ATOM_OK = enif_make_atom(env, "ok");
   ATOM_ERROR = enif_make_atom(env, "error");
+
+#if defined(__MACH__) && defined(__APPLE__)
+  (void) mach_timebase_info(&timebase_info);
+#endif
 }
 
 static int on_load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info)

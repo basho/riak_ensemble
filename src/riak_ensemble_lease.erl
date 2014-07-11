@@ -33,14 +33,14 @@
 %%
 %% 2. In addition to Erlang time, this module also double checks the
 %%    lease against the OS monotonic clock. The monotonic clock is
-%%    is not affected by the user/NTP changing the system clock, and
+%%    not affected by the user/NTP changing the system clock, and
 %%    is designed to always move forward (although, virtualization
-%%    somtimes affects this guarantee).
+%%    sometimes affects this guarantee).
 %%
 %% Likewise, riak_ensemble is designed such that the lease and leader refresh
 %% are much smaller than the follower timeout. All of these factors, along
 %% with riak_ensemble being designed to maintain strong leadership (unlike
-%% other systems such as Raft) make the use of leader leases safe in pratice.
+%% other systems such as Raft) make the use of leader leases safe in practice.
 %% As a reminder, Google is also known to use leader leases it its paxos
 %% implementation as discussed in their "Paxos Made Live" paper.
 %%
