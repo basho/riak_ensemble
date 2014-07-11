@@ -37,6 +37,7 @@
          pending/3, prelead/3, prefollow/3]).
 -export([repair/2, exchange/2,
          repair/3, exchange/3]).
+-export([valid_obj_hash/2]).
 
 %% Support/debug API
 -export([count_quorum/2, ping_quorum/2, check_quorum/2, force_state/2,
@@ -67,6 +68,9 @@
 -define(PROBE_DELAY,       riak_ensemble_config:probe_delay()).
 -define(LOCAL_GET_TIMEOUT, riak_ensemble_config:local_get_timeout()).
 -define(LOCAL_PUT_TIMEOUT, riak_ensemble_config:local_put_timeout()).
+
+%% Supported object hashes used in synctree metadata
+-define(H_OBJ_NONE, 0).
 
 %%%===================================================================
 
@@ -1312,15 +1316,15 @@ do_put_fsm(Key, Fun, Args, From, Self, State=#state{tree=Tree}) ->
             %% io:format("Tree corrupted (put)!~n"),
             send_reply(From, failed),
             gen_fsm:sync_send_event(Self, tree_corrupted, infinity);
-        ObjSeq ->
-            do_put_fsm(Key, Fun, Args, From, Self, ObjSeq, State)
+        KnownHash ->
+            do_put_fsm(Key, Fun, Args, From, Self, KnownHash, State)
     end.
 
-do_put_fsm(Key, Fun, Args, From, Self, ObjSeq, State) ->
+do_put_fsm(Key, Fun, Args, From, Self, KnownHash, State) ->
     %% TODO: Timeout should be configurable per request
     Local = local_get(Self, Key, ?LOCAL_GET_TIMEOUT),
     State2 = State#state{self=Self},
-    case is_current(Local, Key, ObjSeq, State2) of
+    case is_current(Local, Key, KnownHash, State2) of
         local_timeout ->
             %% TODO: Should this send a request_failed?
             %% gen_fsm:sync_send_event(Self, request_failed, infinity),
@@ -1328,7 +1332,7 @@ do_put_fsm(Key, Fun, Args, From, Self, ObjSeq, State) ->
         true ->
             do_modify_fsm(Key, Local, Fun, Args, From, State2);
         false ->
-            case update_key(Key, Local, ObjSeq, State2) of
+            case update_key(Key, Local, KnownHash, State2) of
                 {ok, Current, _State3} ->
                     do_modify_fsm(Key, Current, Fun, Args, From, State2);
                 {corrupted, _State2} ->
@@ -1378,18 +1382,18 @@ do_get_fsm(Key, From, Self, Opts, State=#state{tree=Tree}) ->
             %% io:format("Tree corrupted (get)!~n"),
             send_reply(From, failed),
             gen_fsm:sync_send_event(Self, tree_corrupted, infinity);
-        ObjSeq ->
-            do_get_fsm(Key, From, Self, ObjSeq, Opts, State)
+        KnownHash ->
+            do_get_fsm(Key, From, Self, KnownHash, Opts, State)
     end.
 
 -spec do_get_fsm(_,{_,_},pid(),_,_,state()) -> ok.
-do_get_fsm(Key, From, Self, ObjSeq, Opts, State0) ->
+do_get_fsm(Key, From, Self, KnownHash, Opts, State0) ->
     State = State0#state{self=Self},
     Local = local_get(Self, Key, ?LOCAL_GET_TIMEOUT),
     %% TODO: Allow get to return errors. Make consistent with riak_kv_vnode
     %% TODO: Returning local directly only works if we ensure leader lease
     LocalOnly = not lists:member(read_repair, Opts),
-    case is_current(Local, Key, ObjSeq, State) of
+    case is_current(Local, Key, KnownHash, State) of
         local_timeout ->
             %% TODO: Should this send a request_failed?
             %% gen_fsm:sync_send_event(Self, request_failed, infinity),
@@ -1399,7 +1403,7 @@ do_get_fsm(Key, From, Self, ObjSeq, Opts, State0) ->
                 true ->
                     send_reply(From, {ok, Local});
                 false ->
-                    case get_latest_obj(Key, Local, ObjSeq, State) of
+                    case get_latest_obj(Key, Local, KnownHash, State) of
                         {ok, Latest, Replies, _State2} ->
                             maybe_repair(Key, Latest, Replies, State),
                             send_reply(From, {ok, Latest});
@@ -1409,7 +1413,7 @@ do_get_fsm(Key, From, Self, ObjSeq, Opts, State0) ->
             end;
         false ->
             ?OUT("~p :: not current~n", [Key]),
-            case update_key(Key, Local, ObjSeq, State) of
+            case update_key(Key, Local, KnownHash, State) of
                 {ok, Current, _State2} ->
                     send_reply(From, {ok, Current});
                 {corrupted, _State2} ->
@@ -1455,12 +1459,12 @@ do_local_put(From, Key, Value, State) ->
     State2.
 
 -spec is_current(maybe_obj(), key(), _, state()) -> false | local_timeout | true.
-is_current(timeout, _Key, _ObjSeq, _State) ->
+is_current(timeout, _Key, _KnownHash, _State) ->
     local_timeout;
-is_current(notfound, _Key, _ObjSeq, _State) ->
+is_current(notfound, _Key, _KnownHash, _State) ->
     false;
-is_current(Obj, Key, ObjSeq, State) ->
-    case verify_hash(Key, Obj, ObjSeq, State) of
+is_current(Obj, Key, KnownHash, State) ->
+    case verify_hash(Key, Obj, KnownHash, State) of
         true ->
             Epoch = get_obj(epoch, Obj, State),
             Epoch =:= epoch(State);
@@ -1469,8 +1473,8 @@ is_current(Obj, Key, ObjSeq, State) ->
     end.
 
 -spec update_key(_,_,_,state()) -> {ok, obj(), state()} | {failed,state()} | {corrupted,state()}.
-update_key(Key, Local, ObjSeq, State) ->
-    case get_latest_obj(Key, Local, ObjSeq, State) of
+update_key(Key, Local, KnownHash, State) ->
+    case get_latest_obj(Key, Local, KnownHash, State) of
         {ok, Latest, _Replies, State2} ->
             case put_obj(Key, Latest, State2) of
                 {ok, New, State3} ->
@@ -1510,7 +1514,7 @@ modify_key(Key, Current, Fun, Args, State) ->
     end.
 
 -spec get_latest_obj(_,_,_,state()) -> {ok, obj(), _, state()} | {failed, state()}.
-get_latest_obj(Key, Local, ObjSeq, State=#state{id=Id, members=Members}) ->
+get_latest_obj(Key, Local, KnownHash, State=#state{id=Id, members=Members}) ->
     Epoch = epoch(State),
     Peers = get_peers(Members, State),
     %% In addition to meeting quorum, we must know of at least one object
@@ -1519,14 +1523,14 @@ get_latest_obj(Key, Local, ObjSeq, State=#state{id=Id, members=Members}) ->
                     T = lists:any(fun({_, nack}) ->
                                           false;
                                      ({_, notfound}) ->
-                                          ObjSeq =:= notfound;
+                                          KnownHash =:= notfound;
                                      ({_, Obj}) ->
                                           ObjHash = get_obj_hash(Key, Obj, State),
-                                          ObjHash >= ObjSeq
+                                          valid_obj_hash(ObjHash, KnownHash)
                                   end, Replies),
                     T
             end,
-    Check2 = case verify_hash(Key, Local, ObjSeq, State) of
+    Check2 = case verify_hash(Key, Local, KnownHash, State) of
                  true ->
                      undefined;
                  false ->
@@ -1536,7 +1540,7 @@ get_latest_obj(Key, Local, ObjSeq, State=#state{id=Id, members=Members}) ->
     case wait_for_quorum(Future) of
         {quorum_met, Replies} ->
             Latest = latest_obj(Replies, Local, State),
-            case verify_hash(Key, Latest, ObjSeq, State) of
+            case verify_hash(Key, Latest, KnownHash, State) of
                 true ->
                     {ok, Latest, Replies, State2};
                 false ->
@@ -1581,10 +1585,18 @@ put_obj(Key, Obj, Seq, State=#state{id=Id, members=Members, self=Self}) ->
     end.
 
 get_obj_hash(_Key, Obj, State) ->
-    %% <<ObjHash:128/integer>> = crypto:hash(md5, term_to_binary(Obj)),
     ObjEpoch = get_obj(epoch, Obj, State),
     ObjSeq = get_obj(seq, Obj, State),
-    <<ObjEpoch:64/integer, ObjSeq:64/integer>>.
+    %% TODO: For now, we simply store the epoch/sequence and rely upon
+    %%       backend CRCs to ensure objects with the proper epoch/seq
+    %%       have the proper data. In the future, we should support
+    %%       actual hashing here for stronger guarantees.
+    <<?H_OBJ_NONE, ObjEpoch:64/integer, ObjSeq:64/integer>>.
+
+valid_obj_hash(ActualHash = <<?H_OBJ_NONE, _/binary>>,
+               KnownHash  = <<?H_OBJ_NONE, _/binary>>) ->
+    %% No actual hash to verify, just ensure epoch/seq is equal or newer
+    ActualHash >= KnownHash.
 
 update_hash(Key, ObjHash, State=#state{tree=Tree}) ->
     case riak_ensemble_peer_tree:insert(Key, ObjHash, Tree) of
@@ -1595,26 +1607,29 @@ update_hash(Key, ObjHash, State=#state{tree=Tree}) ->
             {ok, State}
     end.
 
-verify_hash(Key, notfound, ObjSeq, _State) ->
-    case ObjSeq of
+verify_hash(Key, notfound, KnownHash, _State) ->
+    case KnownHash of
         notfound ->
             true;
         _ ->
             lager:warning("~p detected as corrupted", [Key]),
             false
     end;
-verify_hash(Key, Obj, ObjSeq, State) ->
+verify_hash(Key, Obj, KnownHash, State) ->
     ObjHash = get_obj_hash(Key, Obj, State),
-    case ObjSeq of
+    case KnownHash of
         notfound ->
             %% An existing object is by definition newer than notfound.
             true;
-        _ when ObjHash >= ObjSeq ->
-            true;
-        Other ->
-            lager:warning("~p detected as corrupted :: ~p",
-                          [Key, {ObjHash, Other}]),
-            false
+        _ ->
+            case valid_obj_hash(ObjHash, KnownHash) of
+                true ->
+                    true;
+                false ->
+                    lager:warning("~p detected as corrupted :: ~p",
+                                  [Key, {ObjHash, KnownHash}]),
+                    false
+            end
     end.
 
 -spec increment_obj(key(), obj(), seq(), state()) -> obj().

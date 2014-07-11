@@ -87,10 +87,13 @@ exchange(Ensemble, Peer, Id, Tree, [RemotePeer|RemotePeers]) ->
                  riak_ensemble_peer_tree:insert(Key, B, Tree);
              {_Key, {_, '$none'}}  ->
                  ok;
-             {Key, {A,B}} when B > A ->
-                 riak_ensemble_peer_tree:insert(Key, B, Tree);
-             _Other ->
-                 ok
+             {Key, {A,B}} ->
+                 case riak_ensemble_peer:valid_obj_hash(B, A) of
+                     true ->
+                         riak_ensemble_peer_tree:insert(Key, B, Tree);
+                     false ->
+                         ok
+                 end
          end || Diff <- Result],
     exchange(Ensemble, Peer, Id, Tree, RemotePeers).
 
