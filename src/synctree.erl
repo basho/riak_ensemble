@@ -44,7 +44,7 @@
 %%
 %% The main high-levels differences are as follows:
 %%   1. The synctree is built entirely on pure key/value (get/put) operations,
-%%      there is no concept of iteration nor any needed for a sorted backend.
+%%      there is no concept of iteration nor any need for a sorted backend.
 %%
 %%   2. The synctree is always up-to-date. An insert into the tree immediately
 %%      updates the appropriate segment and relevant tree path. There is no
@@ -91,13 +91,22 @@
 -type action() :: {put, _, _} |
                   {delete, _}.
 
+-type hash()   :: binary().
+-type key()    :: term().
+-type value()  :: binary().
+-type level()  :: non_neg_integer().
+-type bucket() :: non_neg_integer().
+-type hashes() :: [{_, hash()}].
+
+-type corrupted() :: {corrupted, level(), bucket()}.
+
 -record(tree, {id        :: term(),
                width     :: pos_integer(),
                segments  :: pos_integer(),
                height    :: pos_integer(),
                shift     :: pos_integer(),
                shift_max :: pos_integer(),
-               top_hash  :: any(),
+               top_hash  :: hash(),
                buffer    :: [action()],
                buffered  :: non_neg_integer(),
                mod       :: module(),
@@ -105,6 +114,8 @@
               }).
 
 -type tree() :: #tree{}.
+-type maybe_integer() :: pos_integer() | default.
+-type options() :: proplists:proplist().
 
 %% Supported hash methods
 -define(H_MD5, 0).
@@ -113,24 +124,31 @@
 %% API
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+-spec newdb(term()) -> tree().
 newdb(Id) ->
     newdb(Id, []).
 
+-spec newdb(term(), options()) -> tree().
 newdb(Id, Opts) ->
     new(Id, default, default, synctree_leveldb, Opts).
 
+-spec new() -> tree().
 new() ->
     new(undefined).
 
+-spec new(term()) -> tree().
 new(Id) ->
     new(Id, ?WIDTH, ?SEGMENTS).
 
+-spec new(term(), maybe_integer(), maybe_integer()) -> tree().
 new(Id, Width, Segments) ->
     new(Id, Width, Segments, synctree_ets).
 
+-spec new(term(), maybe_integer(), maybe_integer(), module()) -> tree().
 new(Id, Width, Segments, Mod) ->
     new(Id, Width, Segments, Mod, []).
 
+-spec new(term(), maybe_integer(), maybe_integer(), module(), options()) -> tree().
 new(Id, default, Segments, Mod, Opts) ->
     new(Id, ?WIDTH, Segments, Mod, Opts);
 new(Id, Width, default, Mod, Opts) ->
@@ -151,20 +169,24 @@ new(Id, Width, Segments, Mod, Opts) ->
                  modstate=Mod:new(Opts)},
     reload_top_hash(Tree).
 
+-spec reload_top_hash(tree()) -> tree().
 reload_top_hash(Tree) ->
     {ok, TopHash} = m_fetch({0,0}, undefined, Tree),
     Tree#tree{top_hash=TopHash}.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+-spec height(tree()) -> pos_integer().
 height(#tree{height=Height}) ->
     Height.
 
+-spec top_hash(tree()) -> hash() | undefined.
 top_hash(#tree{top_hash=TopHash}) ->
     TopHash.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+-spec insert(key(), value(), tree()) -> tree() | corrupted().
 insert(Key, Value, Tree) when is_binary(Value) ->
     Segment = get_segment(Key, Tree),
     case get_path(Segment, Tree) of
@@ -188,6 +210,7 @@ update_path([{{Level,Bucket}, Hashes}|Path], Child, ChildHash, Acc) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+-spec get(key(), tree()) -> value() | notfound | corrupted().
 get(Key, Tree) ->
     TopHash = top_hash(Tree),
     case TopHash of
@@ -199,17 +222,13 @@ get(Key, Tree) ->
                 {corrupted,_,_}=Error ->
                     Error;
                 [{_, Hashes}|_] ->
-                    case orddict:find(Key, Hashes) of
-                        error ->
-                            notfound;
-                        {ok, Value} ->
-                            Value
-                    end
+                    orddict_find(Key, notfound, Hashes)
             end
     end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+-spec exchange_get(bucket(), level(), tree()) -> hashes() | corrupted().
 exchange_get(0, 0, Tree) ->
     TopHash = top_hash(Tree),
     [{0,TopHash}];
@@ -219,6 +238,7 @@ exchange_get(Level, Bucket, Tree) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+-spec corrupt(key(), tree()) -> tree().
 corrupt(Key, Tree=#tree{height=Height}) ->
     Segment = get_segment(Key, Tree),
     Bucket = {Height + 1, Segment},
@@ -232,6 +252,7 @@ get_segment(Key, #tree{segments=Segments}) ->
     <<HashKey:128/integer>> = crypto:hash(md5, ensure_binary(Key)),
     HashKey rem Segments.
 
+-spec hash([{_, binary()}]) -> hash().
 hash(Term) ->
     L = [H || {_,H} <- Term],
     HashBin = crypto:hash(md5, L),
@@ -249,7 +270,7 @@ ensure_binary(Key) ->
 compute_height(Segments, Width) ->
     %% By design, we require segments to be a power of width.
     Height = erlang:trunc(math:log(Segments) / math:log(Width)),
-    case math:pow(Width, Height) == Segments of
+    case erlang:trunc(math:pow(Width, Height)) =:= Segments of
         true ->
             Height
     end.
@@ -257,13 +278,14 @@ compute_height(Segments, Width) ->
 compute_shift(Width) ->
     %% By design, we require width to be a power of 2.
     Shift = erlang:trunc(math:log(Width) / math:log(2)),
-    case math:pow(2, Shift) == Width of
+    case erlang:trunc(math:pow(2, Shift)) =:= Width of
         true ->
             Shift
     end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+-spec verified_hashes(level(), bucket(), tree()) -> hashes() | corrupted().
 verified_hashes(Level, Bucket, Tree=#tree{shift=Shift}) ->
     N = (Level - 1) * Shift,
     TopHash = top_hash(Tree),
@@ -464,9 +486,11 @@ m_flush(Tree=#tree{buffer=Buffer}) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+-spec rehash_upper(tree()) -> tree().
 rehash_upper(Tree=#tree{height=Height}) ->
     rehash(Height, Tree).
 
+-spec rehash(tree()) -> tree().
 rehash(Tree=#tree{height=Height}) ->
     rehash(Height + 1, Tree).
 
@@ -485,7 +509,7 @@ rehash(MaxDepth, Tree) ->
     Tree4#tree{top_hash=TopHash}.
 
 rehash(Level, MaxDepth, Bucket, Tree) when Level =:= MaxDepth ->
-    %% segment level, just return the stored value (nothing to recompute)
+    %% final level, just return the stored value
     {ok, Hashes} = m_fetch({Level, Bucket}, [], Tree),
     {Tree, Hashes};
 rehash(Level, MaxDepth, Bucket, Tree=#tree{width=Width}) ->
@@ -522,9 +546,11 @@ delete_existing_batch(Key, Tree) ->
 
 %% verify using top-down BFS traversal
 
+-spec verify_upper(tree()) -> boolean().
 verify_upper(Tree=#tree{height=Height}) ->
     verify(Height, Tree).
 
+-spec verify(tree()) -> boolean().
 verify(Tree=#tree{height=Height}) ->
     verify(Height + 1, Tree).
 
