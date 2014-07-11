@@ -176,20 +176,20 @@ count_quorum(Ensemble, Timeout) ->
     case ping_quorum(Ensemble, Timeout) of
         timeout ->
             timeout;
-        {_Leader, Replies} ->
+        {_Leader, _, Replies} ->
             length(Replies)
     end.
 
--spec ping_quorum(ensemble_id(), timeout()) -> {leader_id(), [peer_id()]} | timeout.
+-spec ping_quorum(ensemble_id(), timeout()) -> {leader_id(), boolean(), [peer_id()]} | timeout.
 ping_quorum(Ensemble, Timeout) ->
     Result = riak_ensemble_router:sync_send_event(node(), Ensemble,
                                                   ping_quorum, Timeout),
     case Result of
         timeout ->
             timeout;
-        {Leader, Replies} ->
+        {Leader, Ready, Replies} ->
             Quorum = [Peer || {Peer, ok} <- Replies],
-            {Leader, Quorum}
+            {Leader, Ready, Quorum}
     end.
 
 -spec stable_views(ensemble_id(), timeout()) -> {ok, boolean()} | timeout.
@@ -638,7 +638,8 @@ leading(check_quorum, From, State) ->
             send_reply(From, timeout),
             step_down(State2)
     end;
-leading(ping_quorum, From, State=#state{fact=Fact, id=Id, members=Members}) ->
+leading(ping_quorum, From, State=#state{fact=Fact, id=Id, members=Members,
+                                        tree_ready=TreeReady}) ->
     NewFact = increment_sequence(Fact),
     State2 = local_commit(NewFact, State),
     {Future, State3} = blocking_send_all({commit, NewFact}, State2),
@@ -657,7 +658,7 @@ leading(ping_quorum, From, State=#state{fact=Fact, id=Id, members=Members}) ->
                                         %% io:format("timeout~n"),
                                         Extra
                                 end,
-                       gen_fsm:reply(From, {Id, Result})
+                       gen_fsm:reply(From, {Id, TreeReady, Result})
                end),
     {next_state, leading, State3};
 leading(stable_views, _From, State=#state{fact=Fact}) ->
@@ -1713,11 +1714,17 @@ init([Mod, Ensemble, Id, Args]) ->
                     B + erlang:phash2(node()),
                     C),
     ETS = ets:new(x, [public, {read_concurrency, true}, {write_concurrency, true}]),
+    TreeTrust = case riak_ensemble_config:tree_validation() of
+                    false ->
+                        true;
+                    _ ->
+                        false
+                end,
     State = #state{id=Id,
                    ensemble=Ensemble,
                    ets=ETS,
                    peers=[],
-                   tree_trust=false,
+                   tree_trust=TreeTrust,
                    alive=?ALIVE,
                    mod=Mod},
     gen_fsm:send_event(self(), {init, Args}),

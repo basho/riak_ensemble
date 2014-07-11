@@ -87,6 +87,13 @@ storage_tick() ->
     get_env(storage_tick, 5000).
 
 %% @doc
+%% When true, synctrees are not trusted after a peer restart, requiring an
+%% exchange with a trusted majority to become trusted. This provides the
+%% strongest guarantees against byzantine faults.
+tree_validation() ->
+    get_env(tree_validation, true).
+
+%% @doc
 %% Determines if remote synctree updates are performed synchronously.
 %% When true, tree updates are performed before replying to the user.
 synchronous_tree_updates() ->
