@@ -47,6 +47,7 @@ start_link() ->
 
 init([]) ->
     riak_ensemble_test:setup(),
+    synctree_leveldb:init_ets(),
     Children = [?CHILD(riak_ensemble_router_sup, supervisor),
                 ?CHILD(riak_ensemble_storage, worker),
                 ?CHILD(riak_ensemble_peer_sup, supervisor),

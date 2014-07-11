@@ -25,7 +25,10 @@
 -export([send_all/4,
          send_all/5,
          blocking_send_all/4,
+         blocking_send_all/5,
+         blocking_send_all/6,
          wait_for_quorum/1,
+         cast_all/3,
          handle_reply/4,
          quorum_timeout/1,
          reply/3]).
@@ -60,6 +63,19 @@
 -type future() :: undefined | pid().
 -export_type([future/0, msg_from/0]).
 
+-type extra_check() :: undefined | fun(([peer_reply()]) -> boolean()).
+-export_type([extra_check/0]).
+
+-record(collect, {replies  :: [peer_reply()], 
+                  parent   :: maybe_from(),
+                  id       :: peer_id(),
+                  views    :: views(),
+                  required :: required(),
+                  extra    :: extra_check(),
+                  reqid    :: reqid()
+                 }).
+-type collect() :: #collect{}.
+
 %%%===================================================================
 
 -spec send_all(msg(), peer_id(), peer_pids(), views()) -> msg_state().
@@ -79,6 +95,15 @@ send_all(Msg, Id, Peers, Views, Required) ->
     Timer = send_after(?ENSEMBLE_TICK, self(), quorum_timeout),
     #msgstate{awaiting=ReqId, timer=Timer, replies=[], id=Id, views=Views,
               required=Required}.
+
+%%%===================================================================
+
+-spec cast_all(msg(), peer_id(), peer_pids()) -> ok.
+cast_all(Msg, Id, Peers) ->
+    ?OUT("~p/~p: casting to ~p: ~p~n", [Id, self(), Peers, Msg]),
+    _ = [maybe_send_cast(Id, Peer, Msg) || Peer={PeerId,_} <- Peers,
+                                           PeerId =/= Id],
+    ok.
 
 %%%===================================================================
 
@@ -118,6 +143,40 @@ send_request({PeerId, PeerPid}, ReqId, Event) ->
 
 %%%===================================================================
 
+-spec maybe_send_cast(peer_id(), {peer_id(), maybe_pid()}, msg()) -> ok.
+-ifdef(TEST).
+
+maybe_send_cast(Id, {PeerId, PeerPid}, Event) ->
+    case riak_ensemble_test:maybe_drop(Id, PeerId) of
+        true ->
+            %% TODO: Consider nacking instead
+            io:format("Dropping ~p -> ~p~n", [Id, PeerId]),
+            ok;
+        false ->
+            send_cast({PeerId, PeerPid}, Event)
+    end.
+
+-else.
+
+maybe_send_cast(_Id, {PeerId, PeerPid}, Event) ->
+    send_cast({PeerId, PeerPid}, Event).
+
+-endif.
+
+%%%===================================================================
+
+-spec send_cast({peer_id(), maybe_pid()}, msg()) -> ok.
+send_cast({_PeerId, PeerPid}, Event) ->
+    case PeerPid of
+        undefined ->
+            ok;
+        _ ->
+            ?OUT("~p: Sending to ~p: ~p~n", [self(), _PeerId, Event]),
+            gen_fsm:send_event(PeerPid, Event)
+    end.
+
+%%%===================================================================
+
 -spec reply(msg_from(), peer_id(), any()) -> ok.
 reply({riak_ensemble_msg, Sender, ReqId}, Id, Reply) ->
     gen_fsm:send_all_state_event(Sender, {reply, ReqId, Id, Reply}).
@@ -127,40 +186,60 @@ reply({riak_ensemble_msg, Sender, ReqId}, Id, Reply) ->
 -spec blocking_send_all(msg(), peer_id(), peer_pids(), views())
                        -> {future(), msg_state()}.
 blocking_send_all(Msg, Id, Peers, Views) ->
+    blocking_send_all(Msg, Id, Peers, Views, quorum, undefined).
+
+-spec blocking_send_all(msg(), peer_id(), peer_pids(), views(), required())
+                       -> {future(), msg_state()}.
+blocking_send_all(Msg, Id, Peers, Views, Required) when Required =/= undefined ->
+    blocking_send_all(Msg, Id, Peers, Views, Required, undefined).
+
+-spec blocking_send_all(msg(), peer_id(), peer_pids(), views(),
+                        required(), extra_check()) -> {future(), msg_state()}.
+blocking_send_all(Msg, Id, Peers, Views, Required, Extra) when Required =/= undefined ->
     ?OUT("~p: blocking_send_all to ~p: ~p~n", [Id, Peers, Msg]),
-    MsgState = #msgstate{awaiting=undefined, timer=undefined, replies=[], views=Views, id=Id},
+    MsgState = #msgstate{awaiting=undefined, timer=undefined, replies=[],
+                         views=Views, id=Id, required=Required},
     Future = case Peers of
                  [{Id,_}] ->
                      undefined;
                  _ ->
                      spawn_link(fun() ->
-                                        collector(Msg, Peers, MsgState)
+                                        collector(Msg, Peers, Extra, MsgState)
                                 end)
              end,
     {Future, MsgState}.
 
--spec collector(msg(), peer_pids(), msg_state()) -> ok.
-collector(Msg, Peers, #msgstate{id=Id, views=Views}) ->
+-spec collector(msg(), peer_pids(), extra_check(), msg_state()) -> ok.
+collector(Msg, Peers, Extra, #msgstate{id=Id, views=Views, required=Required}) ->
     {ReqId, Request} = make_request(Msg),
     _ = [maybe_send_request(Id, Peer, ReqId, Request) || Peer={PeerId,_} <- Peers,
                                                          PeerId =/= Id],
-    collect_replies([], undefined, Id, Views, ReqId).
+    collect_replies(#collect{replies=[],
+                             parent=undefined,
+                             id=Id,
+                             views=Views,
+                             required=Required,
+                             extra=Extra,
+                             reqid=ReqId}).
 
--spec collect_replies([peer_reply()], maybe_from(), peer_id(), views(), reqid()) -> ok.
-collect_replies(Replies, Parent, Id, Views, ReqId) ->
+-spec collect_replies(collect()) -> ok.
+collect_replies(Collect=#collect{replies=Replies, reqid=ReqId}) ->
     receive
         {'$gen_all_state_event', Event} ->
             {reply, ReqId, Peer, Reply} = Event,
-            check_enough([{Peer, Reply}|Replies], Parent, Id, Views, ReqId);
+            Replies2 = [{Peer, Reply}|Replies],
+            check_enough(Collect#collect{replies=Replies2});
         {waiting, From, Ref} when is_pid(From), is_reference(Ref) ->
-            check_enough(Replies, {From, Ref}, Id, Views, ReqId)
+            Parent = {From, Ref},
+            check_enough(Collect#collect{parent=Parent})
     after ?ENSEMBLE_TICK ->
-            maybe_timeout(Replies, Parent, Id, Views)
+            maybe_timeout(Collect)
     end.
 
-maybe_timeout(Replies, undefined, Id, Views) ->
+maybe_timeout(#collect{parent=undefined, replies=Replies, id=Id,
+                       views=Views, required=Required, extra=Extra}) ->
     receive {waiting, From, Ref} ->
-            case quorum_met(Replies, Id, Views) of
+            case quorum_met(Replies, Id, Views, Required, Extra) of
                 true ->
                     From ! {Ref, ok, Replies},
                     ok;
@@ -168,7 +247,7 @@ maybe_timeout(Replies, undefined, Id, Views) ->
                     collect_timeout(Replies, {From, Ref})
             end
     end;
-maybe_timeout(Replies, Parent, _Id, _Views) ->
+maybe_timeout(#collect{replies=Replies, parent=Parent}) ->
     collect_timeout(Replies, Parent).
 
 -spec collect_timeout([peer_reply()], from()) -> ok.
@@ -176,18 +255,23 @@ collect_timeout(Replies, {From, Ref}) ->
     From ! {Ref, timeout, Replies},
     ok.
 
--spec check_enough([peer_reply()], maybe_from(), peer_id(), views(), reqid()) -> ok.
-check_enough(Replies, undefined, Id, Views, ReqId) ->
-    collect_replies(Replies, undefined, Id, Views, ReqId);
-check_enough(Replies, Parent={From, Ref}, Id, Views, ReqId) ->
-    case quorum_met(Replies, Id, Views) of
+-spec check_enough(collect()) -> ok.
+check_enough(Collect=#collect{parent=undefined}) ->
+    collect_replies(Collect);
+check_enough(Collect=#collect{id=Id,
+                              replies=Replies,
+                              parent={From,Ref}=Parent,
+                              views=Views,
+                              required=Required,
+                              extra=Extra}) ->
+    case quorum_met(Replies, Id, Views, Required, Extra) of
         true ->
             From ! {Ref, ok, Replies},
             ok;
         nack ->
             collect_timeout(Replies, Parent);
         false ->
-            collect_replies(Replies, Parent, Id, Views, ReqId)
+            collect_replies(Collect)
     end.
 
 -spec wait_for_quorum(future()) -> {quorum_met, [peer_reply()]} |
@@ -244,14 +328,20 @@ quorum_timeout(#msgstate{replies=Replies}) ->
 quorum_met(Replies, #msgstate{id=Id, views=Views, required=Required}) ->
     quorum_met(Replies, Id, Views, Required).
 
--spec quorum_met([peer_reply()], peer_id(), views()) -> true | false | nack.
-quorum_met(Replies, Id, Views) ->
-    quorum_met(Replies, Id, Views, quorum).
-
 -spec quorum_met([peer_reply()], peer_id(), views(), required()) -> true | false | nack.
-quorum_met(_Replies, _Id, [], _Required) ->
-    true;
-quorum_met(Replies, Id, [Members|Views], Required) ->
+quorum_met(Replies, Id, Views, Required) ->
+    quorum_met(Replies, Id, Views, Required, undefined).
+
+-spec quorum_met([peer_reply()], peer_id(),
+                 views(), required(), extra_check()) -> true | false | nack.
+quorum_met(Replies, _Id, [], _Required, Extra) ->
+    case Extra of
+        undefined ->
+            true;
+        _ ->
+            Extra(Replies)
+    end;
+quorum_met(Replies, Id, [Members|Views], Required, Extra) ->
     Filtered = [Reply || Reply={Peer,_} <- Replies,
                          lists:member(Peer, Members)],
     {Valid, Nacks} = find_valid(Filtered),
@@ -271,7 +361,7 @@ quorum_met(Replies, Id, [Members|Views], Required) ->
             end,
     if Heard >= Quorum ->
             ?OUT("~p//~nM: ~p~nV: ~p~nN: ~p: view-met~n", [Id, Members, Valid, Nacks]),
-            quorum_met(Replies, Id, Views);
+            quorum_met(Replies, Id, Views, Required, Extra);
        length(Nacks) >= Quorum ->
             ?OUT("~p//~nM: ~p~nV: ~p~nN: ~p: nack~n", [Id, Members, Valid, Nacks]),
             nack;
