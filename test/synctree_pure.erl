@@ -6,6 +6,8 @@
 -define(TEST(X), {timeout, 60, {test, ?MODULE, X}}).
 
 run_test_() ->
+    %% Violating "pure" principle a bit here, alas
+    synctree_leveldb:init_ets(),
     Timeout = 60,
     Tests = [?TEST(test_basic_orddict),
              ?TEST(test_basic_ets),

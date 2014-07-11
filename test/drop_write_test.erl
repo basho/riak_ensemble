@@ -14,16 +14,5 @@ scenario() ->
     erlang:suspend_process(Pid),
     ens_test:wait_stable(root),
     erlang:resume_process(Pid),
-    read_until(<<"drop">>),
+    ens_test:read_until(<<"drop">>),
     ok.
-
-read_until(Key) ->
-    case ens_test:kget(Key) of
-        {ok, Obj} ->
-            Value = riak_ensemble_basic_backend:obj_value(Obj),
-            ?assert(Value =/= notfound),
-            ok;
-        {error, _} ->
-            timer:sleep(100),
-            read_until(Key)
-    end.

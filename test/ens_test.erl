@@ -1,5 +1,6 @@
 -module(ens_test).
 -compile(export_all).
+-include_lib("eunit/include/eunit.hrl").
 
 run(Test) ->
     %% run(Test, 5*60).
@@ -82,3 +83,14 @@ kget(Key) ->
 
 kget(Key, Opts) ->
     riak_ensemble_client:kget(node(), root, Key, 5000, Opts).
+
+read_until(Key) ->
+    case ens_test:kget(Key) of
+        {ok, Obj} ->
+            Value = riak_ensemble_basic_backend:obj_value(Obj),
+            ?assert(Value =/= notfound),
+            ok;
+        {error, _} ->
+            timer:sleep(100),
+            read_until(Key)
+    end.

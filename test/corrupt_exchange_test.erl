@@ -12,8 +12,7 @@ scenario() ->
     io:format(user, "~p~n", [ens_test:kget(<<"corrupt">>)]),
     timer:sleep(10000),
     rt_intercept:add(node(), {synctree, [{{m_store,2}, m_store_normal}]}),
-    timer:sleep(60000),
-    {ok, _} = ens_test:kget(<<"corrupt">>),
+    ens_test:read_until(<<"corrupt">>),
     ok.
 
 %% detect corruption
