@@ -6,27 +6,36 @@
          code_change/3]).
 
 %% API
--export([start/1]).
+-export([start/1, stop/1]).
 
 -record(state, {
-        node :: atom()}).
+        node :: atom(),
+        port :: port()}).
 
 start(Node) ->
     gen_server:start({local, Node}, ?MODULE, Node, []).
 
+stop(Node) ->
+    gen_server:call(Node, stop, 10000).
+
 init(Node) ->
     gen_server:cast(self(), open_port),
     {ok, #state{node=Node}}.
+
+handle_call(stop, _, State=#state{port=Port}) ->
+    port_close(Port),
+    {stop, normal, ok, State};
 
 handle_call(_, _, State) ->
     {reply, ok, State}.
 
 handle_cast(open_port, State=#state{node=Node}) ->
     Str =
-        "erl -shutdown_time 10000 -pa ../.eunit -pa ../ebin -pa ../deps/*/ebin -setcookie riak_ensemble_test -name " ++ atom_to_list(Node),
+        "erl -shutdown_time 10000 -pz ../.eunit -pz ../ebin -pz ../deps/*/ebin -setcookie riak_ensemble_test -name " ++ atom_to_list(Node),
     io:format(user, "Str = ~p~n", [Str]),
-    open_port({spawn, Str}, []),
-    {noreply, State}.
+    Port = open_port({spawn, Str}, []),
+    State2 = State#state{port=Port},
+    {noreply, State2}.
 
 handle_info({_Port, {data, Data}}, State) ->
     lager:info("Received Port(~p) Data ~p", [_Port, Data]),
