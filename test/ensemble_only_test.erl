@@ -42,8 +42,7 @@ setup() ->
     os:cmd("epmd -daemon"),
     {ok, _Pid} = net_kernel:start(['ensemble_tester@127.0.0.1']),
     erlang:set_cookie(node(), riak_ensemble_test),
-    lager:start(),
-    cleanup_riak_ensemble_on_all_nodes().
+    lager:start().
 
 setup_prop() ->
     cleanup_riak_ensemble_on_all_nodes(),
@@ -432,21 +431,11 @@ cleanup_riak_ensemble_on_all_nodes() ->
     wait_for_nodeups(Nodes).
 
 cleanup_riak_ensemble(Node, Path) ->
-    case rpc:call(Node, application, stop, [riak_ensemble], 2000) of
-        {badrpc, _} ->
-            Status = erl_port:start(Node),
-            case Status of
-                {error,{already_started, Pid}} ->
-                    exit(Pid, kill),
-                    _Output = erl_port:start(Node),
-                    io:format(user, "cleanup_riak_ensemble output = ~p~n", [_Output]);
-                {ok, _} ->
-                    ok
-            end;
-        _ ->
-            ok
-    end,
-    os:cmd("rm -rf "++Path).
+    catch exit(whereis(Node), kill),
+    os:cmd("rm -rf "++Path),
+    timer:sleep(500),
+    Status = erl_port:start(Node),
+    lager:info("Node Starting Up: ~p", [Status]).
 
 start_riak_ensemble_on_all_nodes() ->
     [start_riak_ensemble(Node, Path)||
