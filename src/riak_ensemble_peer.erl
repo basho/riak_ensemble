@@ -889,16 +889,6 @@ abandon(State) ->
     State2 = set_leader(undefined, State#state{abandoned=Abandoned}),
     probe(init, State2).
 
--spec is_pending(state()) -> boolean().
-is_pending(#state{ensemble=Ensemble, id=Id, members=Members}) ->
-    case riak_ensemble_manager:get_pending(Ensemble) of
-        {_, PendingViews} ->
-            Pending = compute_members(PendingViews),
-            (not lists:member(Id, Members)) andalso lists:member(Id, Pending);
-        _ ->
-            false
-    end.
-
 -spec in_cluster(peer_id(), [node()]) -> boolean().
 in_cluster({_, Node}, Cluster) ->
     lists:member(Node, Cluster).
