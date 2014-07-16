@@ -41,7 +41,7 @@
 
 %% Support/debug API
 -export([count_quorum/2, ping_quorum/2, check_quorum/2, force_state/2,
-         get_info/1, stable_views/2]).
+         get_info/1, stable_views/2, tree_info/1]).
 
 %% Exported internal callback functions
 -export([do_kupdate/4, do_kput_once/4, do_kmodify/4]).
@@ -203,6 +203,9 @@ get_leader(Pid) when is_pid(Pid) ->
 
 get_info(Pid) when is_pid(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, get_info, infinity).
+
+tree_info(Pid) when is_pid(Pid) ->
+    gen_fsm:sync_send_all_state_event(Pid, tree_info, infinity).
 
 backend_pong(Pid) when is_pid(Pid) ->
     gen_fsm:send_event(Pid, backend_pong).
@@ -1817,6 +1820,12 @@ handle_sync_event(get_leader, _From, StateName, State) ->
 handle_sync_event(get_info, _From, StateName, State=#state{tree_trust=Trust}) ->
     Epoch = epoch(State),
     Info = {StateName, Trust, Epoch},
+    {reply, Info, StateName, State};
+handle_sync_event(tree_info, _From, StateName, State=#state{tree_trust=Trust,
+                                                            tree_ready=Ready,
+                                                            tree=Pid}) ->
+    TopHash = riak_ensemble_peer_tree:top_hash(Pid),
+    Info = {Trust, Ready, TopHash},
     {reply, Info, StateName, State};
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
