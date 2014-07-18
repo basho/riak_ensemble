@@ -11,3 +11,4 @@ corrupt_follower_test
 synctree_path_test
 lease_test
 ensemble_tests_pure
+replace_members_test
