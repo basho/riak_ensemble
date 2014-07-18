@@ -1,12 +1,6 @@
 DIALYZER_APPS=erts kernel stdlib crypto
 DIALYZER_FLAGS ?= -Wunmatched_returns -Werror_handling -Wrace_conditions
 
-include tools.mk
-
-ifeq ($(REBAR),)
-$(error "Rebar not found. Please set REBAR variable or update PATH")
-endif
-
 .PHONY: all compile clean deps test dialyzer typer
 
 all: deps compile xref dialyzer runtests
@@ -35,3 +29,10 @@ runtests: testdeps compile
 
 typer:
 	typer --plt $(DEPS_PLT) -I include -r ./src
+
+include tools.mk
+
+ifeq ($(REBAR),)
+$(error "Rebar not found. Please set REBAR variable or update PATH")
+endif
+
