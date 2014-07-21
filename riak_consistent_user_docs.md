@@ -307,7 +307,7 @@ The new `riak-admin ensemble-status` command can be used to look at the
 state of the consistency subsystem. If your consistent operations are all
 failing, this is a good place to check to see what is going on.
 
-For example, if you forgot to enable to enable strong consistent in `riak.conf`,
+For example, if you forgot to enable strong consistent in `riak.conf`,
 then `riak-admin ensemble-status` will make it clear what the problem is:
 
 ```
