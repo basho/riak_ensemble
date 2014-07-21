@@ -16,7 +16,7 @@ consistency subsystem is activated.
 
 ## What does "strong consistency" mean?
 
-The phase "strong consistency" is often used in different contexts to
+The phrase "strong consistency" is often used in different contexts to
 mean different things.
 
 For Riak, "strong consistency" refers to single-key atomic operations.
