@@ -8,7 +8,7 @@ The consistency mode for a given key is determined by the configuration
 of the bucket type the key is stored under.
 
 For usage details, see [Using Strong
-Consistency](http://docs.basho.com/riak/2.0.0beta1/dev/advanced/strong-consistency)
+Consistency](http://docs.basho.com/riak/2.0.0/dev/advanced/strong-consistency)
 
 Note: In addition to setting `strong_consistency = on` as discussed in
 the above link, a cluster must also have at least 3 nodes before the
@@ -70,7 +70,7 @@ per-request options provided by the normal API. Only the `timeout` and
 `return_body` (in the case of puts) options are handled.
 
 Note: In a future version, Riak will also support strongly consistent
-[Data Types](http://docs.basho.com/riak/2.0.0beta1/dev/using/data-types)
+[Data Types](http://docs.basho.com/riak/2.0.0/dev/using/data-types)
 thus providing atomic increment/decrement, atomic set operations, etc.
 
 ## Consistency Design / Tradeoffs
@@ -527,7 +527,7 @@ secondary indexes (eg. Bitcask).
 
 ### Consistent keys and search
 
-Consistent keys can be indexed by the [Search](http://docs.basho.com/riak/2.0.0beta1/dev/using/search)
+Consistent keys can be indexed by the [Search](http://docs.basho.com/riak/2.0.0/dev/using/search)
 subsystem. The primary caveat is that while the key/value objects are strongly consistent, the
 search index remains eventually consistent. Just-written data may not immediately appear in the
 search index. Furthermore, failed writes that the consistency subsystem will rollback on a future
