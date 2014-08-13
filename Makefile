@@ -28,7 +28,7 @@ runtests: testdeps compile
 	bash test/run.sh
 
 update-doc-lines:
-	escript doc/update_line_numbers.erl ebin doc/*.md
+	@escript doc/update_line_numbers.erl ebin doc/*.md
 
 typer:
 	typer --plt $(DEPS_PLT) -I include -r ./src

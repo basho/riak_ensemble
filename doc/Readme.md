@@ -177,7 +177,7 @@ If a follower receives a K/V operation, it forwards it to its leader (6).  If a 
 5. [riak_ensemble_peer:async/3][]
 6. [riak_ensemble_peer:following_kv/3][]
 7. Last, fallback clause in [riak_ensemble_peer:common/3][]
-8. [riak_ensemble_peer:nack/3][]
+8. [riak_ensemble_peer:nack/2][]
 10. [riak_ensemble_peer:do_kupdate/4][]
 11. [riak_ensemble_peer:do_kput_once/4][]
 12. [riak_ensemble_peer:do_kmodify/4][]
@@ -402,7 +402,7 @@ When it fails to contact its followers to process a request, it will typically t
 
 1. [riak_ensemble_peer:leading/2][]
 2. [K/V operations](#kv-operations)
-3. [riak_ensemble_peer:leading_kv/2][]
+3. [riak_ensemble_peer:leading_kv/3][]
 4. [riak_ensemble_peer:leading/3][]
 5. [Modifying ensembles](#modifying-ensembles)
 6. [riak_ensemble_peer:leader_tick/1][]
@@ -606,6 +606,7 @@ orddict based storage backend for synctree. Good for playing around and testing.
 [riak_ensemble_peer:maybe_update_ensembles/1]: ../src/riak_ensemble_peer.erl#L1127
 [riak_ensemble_peer:mod_get/3]: ../src/riak_ensemble_peer.erl#L2015
 [riak_ensemble_peer:modify_key/5]: ../src/riak_ensemble_peer.erl#L1548
+[riak_ensemble_peer:nack/2]: ../src/riak_ensemble_peer.erl#L1009
 [riak_ensemble_peer:pending/2]: ../src/riak_ensemble_peer.erl#L364
 [riak_ensemble_peer:prefollow/2]: ../src/riak_ensemble_peer.erl#L504
 [riak_ensemble_peer:prelead/2]: ../src/riak_ensemble_peer.erl#L573
@@ -616,11 +617,12 @@ orddict based storage backend for synctree. Good for playing around and testing.
 [riak_ensemble_peer:repair/2]: ../src/riak_ensemble_peer.erl#L415
 [riak_ensemble_peer:setup/2]: ../src/riak_ensemble_peer.erl#L1785
 [riak_ensemble_peer:start_exchange/1]: ../src/riak_ensemble_peer.erl#L448
+[riak_ensemble_peer:step_down/1]: ../src/riak_ensemble_peer.erl#L875
 [riak_ensemble_peer:step_down/2]: ../src/riak_ensemble_peer.erl#L878
 [riak_ensemble_peer:transition/1]: ../src/riak_ensemble_peer.erl#L723
 [riak_ensemble_peer:try_commit/2]: ../src/riak_ensemble_peer.erl#L741
-[riak_ensemble_peer:update_key/4]: ../src/riak_ensemble_peer.erl#L1530
 [riak_ensemble_peer:update_hash/3]: ../src/riak_ensemble_peer.erl#L1674
+[riak_ensemble_peer:update_key/4]: ../src/riak_ensemble_peer.erl#L1530
 [riak_ensemble_peer:update_members/3]: ../src/riak_ensemble_peer.erl#L168
 [riak_ensemble_peer_tree:async_repair/1]: ../src/riak_ensemble_peer_tree.erl#L128
 [riak_ensemble_root:call/1]: ../src/riak_ensemble_root.erl#L74
@@ -636,6 +638,6 @@ orddict based storage backend for synctree. Good for playing around and testing.
 [riak_ensemble_root:update_ensemble/4]: ../src/riak_ensemble_root.erl#L35
 [riak_ensemble_router:sync_proxy/6]: ../src/riak_ensemble_router.erl#L90
 [riak_ensemble_router:sync_send_event/4]: ../src/riak_ensemble_router.erl#L76
-[riak_ensemble_state:set_ensemble/3]: ../src/riak_ensemble_state.erl#L117
 [riak_ensemble_state:merge/2]: ../src/riak_ensemble_state.erl#L172
 [riak_ensemble_state:merge_ensemble/3]: ../src/riak_ensemble_state.erl#L194
+[riak_ensemble_state:set_ensemble/3]: ../src/riak_ensemble_state.erl#L117
