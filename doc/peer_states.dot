@@ -1,0 +1,30 @@
+digraph PeerStates
+{
+    graph [ fontname = "Verdana", pad = 1 , rankdir=LR, ranksep=.50 ];
+    node [fontname = "Verdana", style=filled, fillcolor = "#ffccaa" ];
+    edge [fontname = "Verdana"];
+    Setup -> Probe;
+    Probe -> Pending [label="Is pending member"] ;
+    Probe -> Election [label="Quorum, no leader"];
+    Probe -> Following [label="Quorum, found leader"];
+    Probe -> Exchange [label="Quorum, tree untrusted"];
+    Election -> Prefollow [label="Got prepare"];
+    Election -> Following [label="Got commit"];
+    Election -> Prepare [label="Random time-out, send prepare"];
+    Pending -> Probe [label="Time out"];
+    Pending -> Prefollow [label="Got prepare"];
+    Pending -> Following [label="Got commit"];
+    Prefollow -> Following [label="Got epoch"];
+    Prefollow -> Probe [label="Timed out or got unexpected epoch"];
+    Following -> Probe [label="Time out or exchanged failed"];
+    Prepare -> Probe [label="Time out"];
+    Prepare -> Prelead [label="Quorum replied, send new epoch"];
+    Prelead -> Leading [label="Quorum accepted new epoch"];
+    Prelead -> Probe [label="Epoch replies timed out"];
+    Leading -> Probe [label="Most failures"];
+    Leading -> Prepare [label="KV failure"];
+    Exchange -> Election [label="Exchange complete"];
+    Exchange -> Probe [label="Failed"];
+    Repair -> Exchange [taillabel="Repair complete"];
+    "Any State" -> Repair [label="Tree corrupted"];
+}
