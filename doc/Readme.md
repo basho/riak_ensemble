@@ -177,7 +177,7 @@ If a follower receives a K/V operation, it forwards it to its leader (6).  If a 
 5. [riak_ensemble_peer:async/3][]
 6. [riak_ensemble_peer:following_kv/3][]
 7. Last, fallback clause in [riak_ensemble_peer:common/3][]
-8. [riak_ensemble_peer:nack/3]()
+8. [riak_ensemble_peer:nack/3][]
 10. [riak_ensemble_peer:do_kupdate/4][]
 11. [riak_ensemble_peer:do_kput_once/4][]
 12. [riak_ensemble_peer:do_kmodify/4][]
