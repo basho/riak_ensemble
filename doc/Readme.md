@@ -26,7 +26,7 @@
 
 This library manages consensus groups (ensembles) in a cluster, where each ensemble can execute [linearizable][linearizability] [key/value (K/V) operations](#kv-operations) over a key set. Ensemble members (peers) can be added and removed dynamically. Although created to implement strongly consistent K/V operations in Riak, its [pluggable backends](#riak_ensemble_backend) allow it to be used with other K/V storage engines.
 
-Requests sent to an ensemble are processed by its leader and replicated to a quorum of followers. To ensure consistency in the presence of failures, an algorithm based on [paxos][] in its [vertical flavor][vertical paxos] and [raft][] is used. As long as a majority of peers do not suffer data corruption and can eventually come online and talk to each other, the algorithm is safe. Consistency is achieved by sacrificing availability. Requests will fail if there is no leader with a quorum of following peers. Leadership changes are safe but degrade the performance of the system, so riak_ensemble is designed to avoid them as much as possible. For this, peers enter a [probe state](#probe-state) before triggering elections. [leader leases](#leader-leases), similar to master leases in the [paxos made live][] paper, allow a leader to serve read requests without consulting a quorum in some cases.
+Requests sent to an ensemble are processed by its leader and replicated to a quorum of followers. To ensure consistency in the presence of failures, it uses an algorithm based on [paxos][] in its [vertical flavor][vertical paxos] with many similarities to [raft][]. Consistency is achieved by sacrificing availability. Requests will fail if there is no leader with a quorum of following peers. Leadership changes are safe but degrade the performance of the system, so riak_ensemble is designed to avoid them as much as possible. For this, peers enter a [probe state](#probe-state) before triggering elections. [leader leases](#leader-leases), similar to master leases in the [paxos made live][] paper, allow a leader to serve read requests without consulting a quorum in some cases.
 
 Besides the K/V data managed by its backend, each peer also stores a small amount of metadata used in the consensus algorithm and during [membership changes](#modifying-ensembles) in its [fact record](#facts). Fact storage is centralized in the [storage](#storage) process for efficiency. To prevent undetected data corruption from compromising the safety of the consensus algorithm, it also stores object metadata in its [peer tree](#peer-trees): a type of [merkle tree][] for fast data integrity that is exchanged and verified between peers.
 
@@ -52,7 +52,7 @@ Under the top supervisor we have a number of routers, the manager, the storage w
 
 ![Process hierarchy](hierarchy.png)
 
-The children of riak_ensemble_sup are part of a "rest for one" hierarchy and started in the order above (2). When a child dies, that child and the children started after it are all restarted in the order listed. So the death of riak_ensemble_storage, for example, would take down manager, riak_ensemble_peer_sup and restart them in the original order.
+The children of riak_ensemble_sup are part of a "rest for one" hierarchy and started in the order above (2). When a child dies, that child and the children started after it are all restarted in the order listed. So the death of riak_ensemble_storage, for example, would take down the manager and the peer supervisor, then restart them in the original order: storage first, then the peer supervisor and lastly the manager.
 
 Each peer is linked to a process handling leader leases and a process handling its peer tree.  It also monitors a fixed pool of workers that handle operations to avoid blocking the peer.  Routing is handled by a pool of routing servers for concurrency.
 
@@ -69,7 +69,7 @@ Before nodes can form an ensemble cluster, every node should be running the riak
 
 ## Cluster activation
 
-A cluster is activated by calling the manager's enable function (1), which makes the local manager set the enabled flag and add the root ensemble with a single peer running on the local node to its cluster state record (2) (3). When it checks its state for changes, it will notice the new root peer and start it (4).
+A cluster is activated by calling the manager's enable function (1), which makes the local manager set the enabled flag and add the root ensemble with a single peer running on the local node to its cluster state record (2) (3). When the manager checks its state for changes, it will notice the new root peer and start it (4).
 
 1. [riak_ensemble_manager:enable/0][]
 2. The `enable` clause of [riak_ensemble_manager:handle_call/3][]
@@ -89,7 +89,7 @@ Nodes are added to the cluster by calling the manager's join function, which sen
 
 ## Removing a node
 
-Nodes are removed by calling the manager's remove function (1), which calls the manager on the node in the cluster telling it to remove the other node. The request is forwarded to the root ensemble, whose leader will remove the node from its cluster state object and will gossip it to the remaining managers on its next periodic tick if succesful (3). Notice that that there is no mechanism to alert the manager of the removed node about its removal from the cluster, or that peers belonging to the removed node should be also removed. 
+Nodes are removed by calling the manager's remove function (1). The request is forwarded to the root ensemble, whose leader will remove the node from its cluster state object and will gossip it to the remaining managers on its next periodic tick if succesful (3). Notice that that there is no mechanism to alert the manager of the removed node about its removal from the cluster, or that peers belonging to the removed node should be also removed. 
 
 1. [riak_ensemble_manager:remove/2][].
 2. `{remove, Node}` clause of [riak_ensemble_manager:handle_call/3][]
@@ -97,7 +97,7 @@ Nodes are removed by calling the manager's remove function (1), which calls the 
 
 ## Creating an ensemble
 
-Ensembles are created by calling the manager's create ensemble function (1), which simply forwards to the root ensemble to update the ensemble list in its cluster state object (2). The root ensemble will gossip the new cluster state to the managers. On each node with new or deleted peers, the manager will start or stop them when it periodically checks for changes (3).
+Ensembles are created by calling the manager's create_ensemble function (1), which simply forwards to the root ensemble to update the ensemble list in its cluster state object (2). The root ensemble will gossip the new cluster state to the managers. On each node with new or deleted peers, the manager will start or stop them when it periodically checks for changes (3).
 
 1. [riak_ensemble_manager:create_ensemble/5][]
 2. [root ensemble](#root-ensemble)
@@ -106,11 +106,11 @@ Ensembles are created by calling the manager's create ensemble function (1), whi
 ## Modifying ensembles
 
 Transitioning an ensemble from a set of member peers (a view) to another is a complex multi-step process involving the ensemble leader and the managers. First, 
-the peer update members function is called (1) with the desired member additions and deletions. The leader will apply these changes to the most recent view in its fact and store both the old and new view in the pending field and commit this updated fact to a quorum of peers from the current view. (2)
+the peer update_members function is called (1) with the desired member additions and deletions. The leader will apply these changes to the most recent view in its fact and store both the old and new view in the pending field and commit this updated fact to a quorum of peers from the current view (2).
 On its periodic tick (3), the leader will send the pending views list to the local manager (4), which will periodically gossip it to other managers (5). The newly added or removed peers will eventually be started or stopped when managers on each node periodically check their ensemble data and notice the changes (6). 
 On a subsequent tick, the leader will ask the local manager for the latest pending views it has seen for its ensemble. It will then move them to the views field of its fact and commit it to a quorum (7). After this point, operations will require a quorum involving the new and old members of the ensemble. Since there is no guarantee that the new peers have started, the leader may have to step down if it fails to have a quorum. On a subsequent tick, the leader will notice that the views in the pevious step were succesfully committed, and will remove all but the most recent view from the fact, then commit it (8). On a later tick, the leader will notice its pending views have been commited, clear the pending field in its fact and commit it (9). We are good to go!
 
-Most of the above steps happen in the leader tick function (2), with state stored in a number of fact fields. Notice that during this process multiple views might be stored in the fact's views list up until the final transition, with the most recent at the head of the list. The function is structured so that these actions are tried and as soon as one of them triggers and commits a fact to a quorum, the rest is skipped. The following pseudo code hopefully helps:
+Most of the above steps happen in the leader_tick function (3), with state stored in a number of fact fields. Notice that during this process multiple views might be stored in the fact's views list up until the final transition, with the most recent at the head of the list. The function is structured so that these actions are tried and as soon as one of them triggers and commits a fact to a quorum, the rest is skipped. The following pseudo code hopefully helps:
 
 ```
 update_members:
@@ -155,7 +155,7 @@ clear pending:
 ------------------------------------------------------------
 # KV operations
 
-K/V operations are handled by ensemble leaders, which normally forward to a quorum of followers.  The consensus algorithm ensures that these operations are atomic and operate on the latest version of an object. Objects are written with a two part version number: The epoch, which changes only with a leader change, and the sequence number which is incremented on each write operation.
+K/V operations are handled by ensemble leaders, which normally coordinates with a quorum of followers to process them.  The consensus algorithm ensures that these operations are atomic and operate on the latest version of an object. Objects are written with a two part version number: The epoch, which changes only with a leader change, and the sequence number which is incremented on each write operation.
 
 * **kget(Key)** : Get value for key
 * **kupdate(Key, OldValue, NewValue)** : A compare-and-swap atomic update.  Replace with NewValue if value is still OldValue.
@@ -186,9 +186,9 @@ If a follower receives a K/V operation, it forwards it to its leader (6).  If a 
 
 In response to a `{get, Key, Opts}` message, the leader executes the get FSM function in a worker (1). The worker first looks up the key in the local peer tree. The request will fail if tree corruption is detected. Otherwise the worker requests the local value by sending a `{local_get, Key}` message back to the leader process (2).
 
-If the local value passes the integrity test and was written in the current epoch (3), it may be returned without consulting followers if the lease is still up and configured to trust leases (4). If the read_repair option is passed, however, the worker will always fetch the value from a quorum of followers, requiring that at least one of the returned values matches the version in the local tree (5). It will then issue conditional puts to update all peers (including itself) with the latest value (6). **Note**: There is a TODO item to update only divergent peers.
+If the local value passes the integrity test and was written in the current epoch (3), it may be returned without consulting followers if the lease is still up and configured to trust leases (4). If the read_repair option is passed, however, the worker will always fetch the value from a quorum of followers, requiring that at least one of the replies matches our local tree (either the same version or it is missing in both trees) (5). It will then issue conditional puts to update all peers (including itself) with the latest value (6). **Note**: There is a TODO item to update only divergent peers.
 
-If the local value has an earlier epoch, then the latest value is fetched from a quorum of peers and it is rewritten to a quorum with an updated epoch and sequence number (7). This is an important fact: Leadership changes will affect the performance of reads by adding this obligatory read + write rounds.
+If the local value has an earlier epoch, then the latest value is fetched from a quorum of peers and it is rewritten to a quorum with an updated epoch and sequence number (7). This is necessary to avoid inconsistencies from partial write failures. This is an important fact: Leadership changes will affect the performance of reads by adding this obligatory read + write rounds.
 
 The peer tree is updated with this object's latest version after the quorum write (8) (9).
 
@@ -221,7 +221,7 @@ If the data integrity test fails or the object was written in a previous epoch, 
 
 ## Overwrite path
 
-This path is very simple because it does not matter what the latest version of a value is. On receiving an `{overwrite, Key, Value}}` message, the leader executes the overwrite FSM function in a worker (1).  A new value with the current epoch and next sequence number is then written to a quorum of peers (2).
+This path is very simple because it does not matter what the latest version of a value is. On receiving an `{overwrite, Key, Value}` message, the leader executes the overwrite FSM function in a worker (1).  A new value with the current epoch and next sequence number is then written to a quorum of peers (2).
 
 1. [riak_ensemble_peer:do_overwrite_fsm/5][]
 2. [riak_ensemble_peer:put_obj/3][]
@@ -241,7 +241,6 @@ The main difference between this and the hash trees in riak_core is that hashes 
 2. [synctree_leveldb](#synctree_leveldb)
 3. [synctree_ets](#synctree_ets)
 4. [synctree_orddict](#synctree_orddict)
-
 
 
 ------------------------------------------------------------
@@ -268,9 +267,8 @@ See the definition of the [fact record in riak_ensemble_peer](../src/riak_ensemb
 
 Each ensemble node has a manager gen_server process that stores a local copy of the cluster state which is gossiped around to other manager processes in the cluster (1).  This cluster data is stored in a public ETS table.  Several convenience functions in the manager module query this table directly for things like the process id of a peer, the current leader of an ensemble, the current list of ensembles, etc.  It implements its own very simple gossip mechanism that asynchronously sends its data to a random sample of the nodes in the cluster.
 
-The cluster membership functions in this module simply forward the operations to the root ensemble
-It also contains the very important activation code
-that creates the [root ensemble](#root-ensemble).
+The cluster membership functions in this module simply forward the operations to the root ensemble.
+The manager also contains the very important activation code that creates the [root ensemble](#root-ensemble).
 
 1. [riak_ensemble_manager](../src/riak_ensemble_manager.erl)
 2. [riak_ensemble_manager:send_gossip/1][]
@@ -282,7 +280,7 @@ that creates the [root ensemble](#root-ensemble).
 ------------------------------------------------------------
 # Root ensemble
 
-The root ensemble is a special consensus group whose function is to consistently maintain the list of nodes and ensembles in the cluster.  Node joins (2), node removals (3) and ensemble creations (4) are translated to modify operations (5) on the cluster state object managed by the root ensemble. There is also a special operation that just gossips the current cluster state to the local manager (6).  The only difference is which function and arguments is passed to modify the cluster state (7) (8). The cluster state structure and operations are encapsulated in the riak_ensemble_state module (9)
+The root ensemble is a special consensus group whose function is to consistently maintain the list of nodes and ensembles in the cluster.  Node joins (2), node removals (3) and ensemble creations (4) are translated to modify operations (5) on the cluster state object managed by the root ensemble. There is also a special operation that just gossips the current cluster state to the local manager (6).  The only difference is which function and arguments are passed to modify the cluster state (7) (8). The cluster state structure and operations are encapsulated in the riak_ensemble_state module (9).
 
 **Note**: The cluster state structure also contains ensemble peer lists, but the root ensemble does not manage them.  Ensembles modify their peer lists themselves (10) and send it to the managers. But the peer lists are versioned, so when the root ensemble sends its cluster state to the manager, the merge operation used discards the outdated peer lists from the root ensemble (11) (12) (13).
 
@@ -306,9 +304,9 @@ The root ensemble is created when the ensemble cluster is activated (14). A new 
 ------------------------------------------------------------
 # Peer states
 
-Peers are started by the manager process, which periodically checksthe ensemble information in the cluster state for peers belonging to its node but not yet running (1) (2).
+Peers are started by the manager process, which periodically checks the ensemble information in the cluster state for peers belonging to its node but not yet running (1) (2).
 
-During normal operation, a single peer is in the `leading` state processing client requests and the rest are in `following`. Other than that, a peer will be trying to figure out who the leader is, trying to become one or making sure the data in its peer tree is up to date. Leaders regularly send  `commit` messages with its latest fact to a quorum of followers, and will generally step down if it fails to get quorum on any operation. Multiple leaders may exist at the same time briefly, but only one will be able to update data succesfully.
+During normal operation, a single peer is in the `leading` state processing client requests and the rest are in `following`. Other than that, a peer will be trying to figure out who the leader is, trying to become one or making sure the data in its peer tree is up to date. Leaders regularly send  `commit` messages with their latest fact to a quorum of followers, and will generally step down if it fails to get quorum on any operation. Multiple leaders may exist at the same time briefly, but only one will be able to update data succesfully.
 
 A peer will become a leader in a two phase process: First it needs a quorum of peers to accept its `prepare` message. If subsequently a quorum of peers accepts its `new_epoch` message, it starts leading and the peers that accepted it start following.
 
@@ -449,7 +447,9 @@ Each peer has an accompanying lease process which keeps track of the status of a
 
 A pool of routers takes care of routing messages to ensemble leaders using the ensemble information from the local manager. Requests choose a router from the pool at random. 
 
-See [riak_ensemble_router](#riak_ensemble_router)
+1. [riak_ensemble_router](#riak_ensemble_router)
+2. [riak_ensemble_msg](#riak_ensemble_msg)
+
 
 ## Optimized round trip
 
@@ -462,7 +462,7 @@ In particular, backend modules are expected to directly reply to the original ca
 
 It is typical for an Erlang process to message another, time out while waiting for a reply, and then later receive this reply at the most inconvenient of times.  This can lead to anti-patterns such as catch all clauses to handle these stray messages, which may hide bugs, or sporadic error messages or crashes when the message is received by a layer of code that does not understand it.
 
-Routers avoid late messages by spawning an intermediary proxy process to do the calling/message sending.  If a time out occurs, the process alerts the caller and goes away. Late messages will be thrown in the bit bucket (1) (2)
+Routers avoid late messages by spawning an intermediary proxy process to do the calling/message sending.  If a time out occurs, the process alerts the caller and goes away. Late messages will be thrown in the bit bucket (1) (2).
 
 1. [riak_ensemble_router:sync_send_event/4][]
 2. [riak_ensemble_router:sync_proxy/6][]).
