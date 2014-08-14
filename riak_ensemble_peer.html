@@ -16,12 +16,32 @@
 
 <h2><a name="types">Data Types</a></h2>
 
+<h3 class="typedecl"><a name="type-change_error">change_error()</a></h3>
+<p><tt>change_error() = already_member | not_member</tt></p>
+
+
+<h3 class="typedecl"><a name="type-ensemble_id">ensemble_id()</a></h3>
+<p><tt>ensemble_id() = term()</tt></p>
+
+
+<h3 class="typedecl"><a name="type-epoch">epoch()</a></h3>
+<p><tt>epoch() = integer()</tt></p>
+
+
+<h3 class="typedecl"><a name="type-fact">fact()</a></h3>
+<p><tt>fact() = #fact{epoch = undefined | <a href="#type-epoch">epoch()</a>, seq = undefined | <a href="#type-seq">seq()</a>, leader = undefined | <a href="#type-peer_id">peer_id()</a>, view_vsn = undefined | {<a href="#type-epoch">epoch()</a>, <a href="#type-seq">seq()</a>}, pend_vsn = undefined | {<a href="#type-epoch">epoch()</a>, <a href="#type-seq">seq()</a>}, commit_vsn = undefined | {<a href="#type-epoch">epoch()</a>, <a href="#type-seq">seq()</a>}, pending = undefined | {<a href="#type-vsn">vsn()</a>, <a href="#type-views">views()</a>}, views = undefined | [[<a href="#type-peer_id">peer_id()</a>]]}</tt></p>
+
+
 <h3 class="typedecl"><a name="type-fsm_from">fsm_from()</a></h3>
 <p><tt>fsm_from() = {term(), term()}</tt></p>
 
 
 <h3 class="typedecl"><a name="type-key">key()</a></h3>
 <p><tt>key() = any()</tt></p>
+
+
+<h3 class="typedecl"><a name="type-leader_id">leader_id()</a></h3>
+<p><tt>leader_id() = undefined | <a href="#type-peer_id">peer_id()</a></tt></p>
 
 
 <h3 class="typedecl"><a name="type-modify_fun">modify_fun()</a></h3>
@@ -36,8 +56,24 @@
 <p><tt>obj() = any()</tt></p>
 
 
+<h3 class="typedecl"><a name="type-peer_change">peer_change()</a></h3>
+<p><tt>peer_change() = term()</tt></p>
+
+
+<h3 class="typedecl"><a name="type-peer_id">peer_id()</a></h3>
+<p><tt>peer_id() = {term(), node()}</tt></p>
+
+
+<h3 class="typedecl"><a name="type-seq">seq()</a></h3>
+<p><tt>seq() = integer()</tt></p>
+
+
 <h3 class="typedecl"><a name="type-state">state()</a></h3>
-<p><tt>state() = #state{}</tt></p>
+<p><tt>state() = #state{id = undefined | <a href="#type-peer_id">peer_id()</a>, ensemble = undefined | <a href="#type-ensemble_id">ensemble_id()</a>, ets = undefined | <a href="ets.html#type-tid">ets:tid()</a>, fact = undefined | <a href="#type-fact">fact()</a>, awaiting = undefined | <a href="riak_ensemble_msg.html#type-msg_state">riak_ensemble_msg:msg_state()</a>, preliminary = undefined | {<a href="#type-peer_id">peer_id()</a>, <a href="#type-epoch">epoch()</a>}, abandoned = undefined | {<a href="#type-epoch">epoch()</a>, <a href="#type-seq">seq()</a>}, timer = undefined | <a href="#type-timer">timer()</a>, ready = boolean(), members = undefined | [<a href="#type-peer_id">peer_id()</a>], peers = undefined | [{<a href="#type-peer_id">peer_id()</a>, pid()}], mod = undefined | module(), modstate = undefined | any(), workers = undefined | tuple(), tree_trust = undefined | boolean(), tree_ready = undefined | boolean(), alive = undefined | integer(), last_views = undefined | [[<a href="#type-peer_id">peer_id()</a>]], async = undefined | pid(), tree = undefined | pid(), lease = undefined | <a href="riak_ensemble_lease.html#type-lease_ref">riak_ensemble_lease:lease_ref()</a>, self = undefined | pid()}</tt></p>
+
+
+<h3 class="typedecl"><a name="type-std_reply">std_reply()</a></h3>
+<p><tt>std_reply() = timeout | failed | unavailable | nack | {ok, term()}</tt></p>
 
 
 <h3 class="typedecl"><a name="type-sync_next_state">sync_next_state()</a></h3>
@@ -48,13 +84,21 @@
 <p><tt>target() = pid() | <a href="#type-ensemble_id">ensemble_id()</a></tt></p>
 
 
+<h3 class="typedecl"><a name="type-timer">timer()</a></h3>
+<p><tt>timer() = term()</tt></p>
+
+
+<h3 class="typedecl"><a name="type-views">views()</a></h3>
+<p><tt>views() = [[<a href="#type-peer_id">peer_id()</a>]]</tt></p>
+
+
+<h3 class="typedecl"><a name="type-vsn">vsn()</a></h3>
+<p><tt>vsn() = {<a href="#type-epoch">epoch()</a>, <a href="#type-seq">seq()</a>}</tt></p>
+
+
 <h2><a name="index">Function Index</a></h2>
-<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#all_sync-2">all_sync/2</a></td><td></td></tr>
-<tr><td valign="top"><a href="#all_sync-3">all_sync/3</a></td><td></td></tr>
-<tr><td valign="top"><a href="#backend_pong-1">backend_pong/1</a></td><td></td></tr>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#backend_pong-1">backend_pong/1</a></td><td></td></tr>
 <tr><td valign="top"><a href="#check_quorum-2">check_quorum/2</a></td><td></td></tr>
-<tr><td valign="top"><a href="#check_sync-2">check_sync/2</a></td><td></td></tr>
-<tr><td valign="top"><a href="#check_sync-3">check_sync/3</a></td><td></td></tr>
 <tr><td valign="top"><a href="#code_change-4">code_change/4</a></td><td></td></tr>
 <tr><td valign="top"><a href="#count_quorum-2">count_quorum/2</a></td><td></td></tr>
 <tr><td valign="top"><a href="#do_kmodify-4">do_kmodify/4</a></td><td></td></tr>
@@ -62,9 +106,12 @@
 <tr><td valign="top"><a href="#do_kupdate-4">do_kupdate/4</a></td><td></td></tr>
 <tr><td valign="top"><a href="#election-2">election/2</a></td><td></td></tr>
 <tr><td valign="top"><a href="#election-3">election/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#exchange-2">exchange/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#exchange-3">exchange/3</a></td><td></td></tr>
 <tr><td valign="top"><a href="#following-2">following/2</a></td><td></td></tr>
 <tr><td valign="top"><a href="#following-3">following/3</a></td><td></td></tr>
 <tr><td valign="top"><a href="#force_state-2">force_state/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#get_info-1">get_info/1</a></td><td></td></tr>
 <tr><td valign="top"><a href="#get_leader-1">get_leader/1</a></td><td></td></tr>
 <tr><td valign="top"><a href="#handle_event-3">handle_event/3</a></td><td></td></tr>
 <tr><td valign="top"><a href="#handle_info-3">handle_info/3</a></td><td></td></tr>
@@ -74,6 +121,7 @@
 <tr><td valign="top"><a href="#join-3">join/3</a></td><td></td></tr>
 <tr><td valign="top"><a href="#kdelete-4">kdelete/4</a></td><td></td></tr>
 <tr><td valign="top"><a href="#kget-4">kget/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#kget-5">kget/5</a></td><td></td></tr>
 <tr><td valign="top"><a href="#kmodify-6">kmodify/6</a></td><td></td></tr>
 <tr><td valign="top"><a href="#kover-5">kover/5</a></td><td></td></tr>
 <tr><td valign="top"><a href="#kput_once-5">kput_once/5</a></td><td></td></tr>
@@ -85,6 +133,7 @@
 <tr><td valign="top"><a href="#obj_value-3">obj_value/3</a></td><td></td></tr>
 <tr><td valign="top"><a href="#pending-2">pending/2</a></td><td></td></tr>
 <tr><td valign="top"><a href="#pending-3">pending/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#ping_quorum-2">ping_quorum/2</a></td><td></td></tr>
 <tr><td valign="top"><a href="#prefollow-2">prefollow/2</a></td><td></td></tr>
 <tr><td valign="top"><a href="#prefollow-3">prefollow/3</a></td><td></td></tr>
 <tr><td valign="top"><a href="#prelead-2">prelead/2</a></td><td></td></tr>
@@ -93,28 +142,19 @@
 <tr><td valign="top"><a href="#prepare-3">prepare/3</a></td><td></td></tr>
 <tr><td valign="top"><a href="#probe-2">probe/2</a></td><td></td></tr>
 <tr><td valign="top"><a href="#probe-3">probe/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#repair-2">repair/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#repair-3">repair/3</a></td><td></td></tr>
 <tr><td valign="top"><a href="#setup-2">setup/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#stable_views-2">stable_views/2</a></td><td></td></tr>
 <tr><td valign="top"><a href="#start-4">start/4</a></td><td></td></tr>
 <tr><td valign="top"><a href="#start_link-4">start_link/4</a></td><td></td></tr>
-<tr><td valign="top"><a href="#sync-2">sync/2</a></td><td></td></tr>
-<tr><td valign="top"><a href="#sync-3">sync/3</a></td><td></td></tr>
-<tr><td valign="top"><a href="#sync_complete-2">sync_complete/2</a></td><td></td></tr>
-<tr><td valign="top"><a href="#sync_failed-1">sync_failed/1</a></td><td></td></tr>
 <tr><td valign="top"><a href="#terminate-3">terminate/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#tree_info-1">tree_info/1</a></td><td></td></tr>
 <tr><td valign="top"><a href="#update_members-3">update_members/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#valid_obj_hash-2">valid_obj_hash/2</a></td><td></td></tr>
 </table>
 
 <h2><a name="functions">Function Details</a></h2>
-
-<h3 class="function"><a name="all_sync-2">all_sync/2</a></h3>
-<div class="spec">
-<p><tt>all_sync(Msg, State) -&gt; any()</tt></p>
-</div>
-
-<h3 class="function"><a name="all_sync-3">all_sync/3</a></h3>
-<div class="spec">
-<p><tt>all_sync(Msg, From, State) -&gt; any()</tt></p>
-</div>
 
 <h3 class="function"><a name="backend_pong-1">backend_pong/1</a></h3>
 <div class="spec">
@@ -124,16 +164,6 @@
 <h3 class="function"><a name="check_quorum-2">check_quorum/2</a></h3>
 <div class="spec">
 <p><tt>check_quorum(Ensemble::<a href="#type-ensemble_id">ensemble_id()</a>, Timeout::timeout()) -&gt; ok | timeout</tt><br></p>
-</div>
-
-<h3 class="function"><a name="check_sync-2">check_sync/2</a></h3>
-<div class="spec">
-<p><tt>check_sync(Msg, State) -&gt; any()</tt></p>
-</div>
-
-<h3 class="function"><a name="check_sync-3">check_sync/3</a></h3>
-<div class="spec">
-<p><tt>check_sync(Msg, From, State) -&gt; any()</tt></p>
 </div>
 
 <h3 class="function"><a name="code_change-4">code_change/4</a></h3>
@@ -171,6 +201,16 @@
 <p><tt>election(Msg::term(), From::<a href="#type-fsm_from">fsm_from()</a>, State::<a href="#type-state">state()</a>) -&gt; {next_state, election, <a href="#type-state">state()</a>}</tt><br></p>
 </div>
 
+<h3 class="function"><a name="exchange-2">exchange/2</a></h3>
+<div class="spec">
+<p><tt>exchange(Msg, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="exchange-3">exchange/3</a></h3>
+<div class="spec">
+<p><tt>exchange(Msg, From, State) -&gt; any()</tt></p>
+</div>
+
 <h3 class="function"><a name="following-2">following/2</a></h3>
 <div class="spec">
 <p><tt>following(Msg::term(), State::<a href="#type-state">state()</a>) -&gt; <a href="#type-next_state">next_state()</a></tt><br></p>
@@ -184,6 +224,11 @@
 <h3 class="function"><a name="force_state-2">force_state/2</a></h3>
 <div class="spec">
 <p><tt>force_state(Pid, EpochSeq) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="get_info-1">get_info/1</a></h3>
+<div class="spec">
+<p><tt>get_info(Pid) -&gt; any()</tt></p>
 </div>
 
 <h3 class="function"><a name="get_leader-1">get_leader/1</a></h3>
@@ -229,6 +274,11 @@
 <h3 class="function"><a name="kget-4">kget/4</a></h3>
 <div class="spec">
 <p><tt>kget(Node::node(), Target::<a href="#type-target">target()</a>, Key::<a href="#type-key">key()</a>, Timeout::timeout()) -&gt; <a href="#type-std_reply">std_reply()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="kget-5">kget/5</a></h3>
+<div class="spec">
+<p><tt>kget(Node::node(), Target::<a href="#type-target">target()</a>, Key::<a href="#type-key">key()</a>, Timeout::timeout(), Opts::term()) -&gt; <a href="#type-std_reply">std_reply()</a></tt><br></p>
 </div>
 
 <h3 class="function"><a name="kmodify-6">kmodify/6</a></h3>
@@ -286,6 +336,11 @@
 <p><tt>pending(Msg, From, State) -&gt; any()</tt></p>
 </div>
 
+<h3 class="function"><a name="ping_quorum-2">ping_quorum/2</a></h3>
+<div class="spec">
+<p><tt>ping_quorum(Ensemble::<a href="#type-ensemble_id">ensemble_id()</a>, Timeout::timeout()) -&gt; {<a href="#type-leader_id">leader_id()</a>, boolean(), [<a href="#type-peer_id">peer_id()</a>]} | timeout</tt><br></p>
+</div>
+
 <h3 class="function"><a name="prefollow-2">prefollow/2</a></h3>
 <div class="spec">
 <p><tt>prefollow(Msg, State) -&gt; any()</tt></p>
@@ -326,9 +381,24 @@
 <p><tt>probe(Msg::term(), From::<a href="#type-fsm_from">fsm_from()</a>, State::<a href="#type-state">state()</a>) -&gt; {next_state, probe, <a href="#type-state">state()</a>}</tt><br></p>
 </div>
 
+<h3 class="function"><a name="repair-2">repair/2</a></h3>
+<div class="spec">
+<p><tt>repair(Msg, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="repair-3">repair/3</a></h3>
+<div class="spec">
+<p><tt>repair(Msg::term(), From::<a href="#type-fsm_from">fsm_from()</a>, State::<a href="#type-state">state()</a>) -&gt; {next_state, repair, <a href="#type-state">state()</a>}</tt><br></p>
+</div>
+
 <h3 class="function"><a name="setup-2">setup/2</a></h3>
 <div class="spec">
 <p><tt>setup(X1, State0) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="stable_views-2">stable_views/2</a></h3>
+<div class="spec">
+<p><tt>stable_views(Ensemble::<a href="#type-ensemble_id">ensemble_id()</a>, Timeout::timeout()) -&gt; {ok, boolean()} | timeout</tt><br></p>
 </div>
 
 <h3 class="function"><a name="start-4">start/4</a></h3>
@@ -341,38 +411,28 @@
 <p><tt>start_link(Mod::module(), Ensemble::<a href="#type-ensemble_id">ensemble_id()</a>, Id::<a href="#type-peer_id">peer_id()</a>, Args::[any()]) -&gt; ignore | {error, term()} | {ok, pid()}</tt><br></p>
 </div>
 
-<h3 class="function"><a name="sync-2">sync/2</a></h3>
-<div class="spec">
-<p><tt>sync(Msg, State) -&gt; any()</tt></p>
-</div>
-
-<h3 class="function"><a name="sync-3">sync/3</a></h3>
-<div class="spec">
-<p><tt>sync(Msg::term(), From::<a href="#type-fsm_from">fsm_from()</a>, State::<a href="#type-state">state()</a>) -&gt; {next_state, sync, <a href="#type-state">state()</a>}</tt><br></p>
-</div>
-
-<h3 class="function"><a name="sync_complete-2">sync_complete/2</a></h3>
-<div class="spec">
-<p><tt>sync_complete(Pid::pid(), Peers::[<a href="#type-peer_id">peer_id()</a>]) -&gt; ok</tt><br></p>
-</div>
-
-<h3 class="function"><a name="sync_failed-1">sync_failed/1</a></h3>
-<div class="spec">
-<p><tt>sync_failed(Pid::pid()) -&gt; ok</tt><br></p>
-</div>
-
 <h3 class="function"><a name="terminate-3">terminate/3</a></h3>
 <div class="spec">
 <p><tt>terminate(Reason::term(), StateName::term(), State::term()) -&gt; ok</tt><br></p>
+</div>
+
+<h3 class="function"><a name="tree_info-1">tree_info/1</a></h3>
+<div class="spec">
+<p><tt>tree_info(Pid) -&gt; any()</tt></p>
 </div>
 
 <h3 class="function"><a name="update_members-3">update_members/3</a></h3>
 <div class="spec">
 <p><tt>update_members(Pid::pid(), Changes::[<a href="#type-peer_change">peer_change()</a>], Timeout::timeout()) -&gt; ok | timeout | {error, [{<a href="#type-change_error">change_error()</a>, <a href="#type-peer_id">peer_id()</a>}]}</tt><br></p>
 </div>
+
+<h3 class="function"><a name="valid_obj_hash-2">valid_obj_hash/2</a></h3>
+<div class="spec">
+<p><tt>valid_obj_hash(ActualHash, KnownHash) -&gt; any()</tt></p>
+</div>
 <hr>
 
 <div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
-<p><i>Generated by EDoc, Jun 11 2014, 15:43:21.</i></p>
+<p><i>Generated by EDoc, Aug 14 2014, 14:20:45.</i></p>
 </body>
 </html>

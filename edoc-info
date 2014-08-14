@@ -2,8 +2,11 @@
 {application,riak_ensemble}.
 {packages,[]}.
 {modules,[riak_ensemble_app,riak_ensemble_backend,riak_ensemble_basic_backend,
-          riak_ensemble_client,riak_ensemble_manager,riak_ensemble_msg,
-          riak_ensemble_peer,riak_ensemble_peer_sup,riak_ensemble_peer_worker,
+          riak_ensemble_client,riak_ensemble_clock,riak_ensemble_config,
+          riak_ensemble_exchange,riak_ensemble_lease,riak_ensemble_manager,
+          riak_ensemble_msg,riak_ensemble_peer,riak_ensemble_peer_sup,
+          riak_ensemble_peer_tree,riak_ensemble_peer_worker,
           riak_ensemble_root,riak_ensemble_router,riak_ensemble_router_sup,
           riak_ensemble_save,riak_ensemble_state,riak_ensemble_storage,
-          riak_ensemble_sup,riak_ensemble_test,riak_ensemble_util]}.
+          riak_ensemble_sup,riak_ensemble_test,riak_ensemble_util,synctree,
+          synctree_ets,synctree_leveldb,synctree_orddict]}.

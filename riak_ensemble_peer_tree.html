@@ -1,0 +1,158 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1">
+<title>Module riak_ensemble_peer_tree</title>
+<link rel="stylesheet" type="text/css" href="stylesheet.css" title="EDoc">
+</head>
+<body bgcolor="white">
+<div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<hr>
+
+<h1>Module riak_ensemble_peer_tree</h1>
+<ul class="index"><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>
+
+<p><b>Behaviours:</b> <a href="gen_server.html"><tt>gen_server</tt></a>.</p>
+
+<h2><a name="index">Function Index</a></h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#async_rehash-1">async_rehash/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#async_rehash_upper-1">async_rehash_upper/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#async_repair-1">async_repair/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#async_verify-1">async_verify/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#async_verify_upper-1">async_verify_upper/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#code_change-3">code_change/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#exchange_get-3">exchange_get/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#get-2">get/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#handle_call-3">handle_call/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#handle_cast-2">handle_cast/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#handle_info-2">handle_info/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#height-1">height/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#init-1">init/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#insert-3">insert/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#rehash-1">rehash/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#rehash_upper-1">rehash_upper/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#repair-1">repair/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#start_link-3">start_link/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#terminate-2">terminate/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#top_hash-1">top_hash/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#verify-1">verify/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#verify_upper-1">verify_upper/1</a></td><td></td></tr>
+</table>
+
+<h2><a name="functions">Function Details</a></h2>
+
+<h3 class="function"><a name="async_rehash-1">async_rehash/1</a></h3>
+<div class="spec">
+<p><tt>async_rehash(Pid::pid()) -&gt; ok</tt><br></p>
+</div>
+
+<h3 class="function"><a name="async_rehash_upper-1">async_rehash_upper/1</a></h3>
+<div class="spec">
+<p><tt>async_rehash_upper(Pid::pid()) -&gt; ok</tt><br></p>
+</div>
+
+<h3 class="function"><a name="async_repair-1">async_repair/1</a></h3>
+<div class="spec">
+<p><tt>async_repair(Pid::pid()) -&gt; ok</tt><br></p>
+</div>
+
+<h3 class="function"><a name="async_verify-1">async_verify/1</a></h3>
+<div class="spec">
+<p><tt>async_verify(Pid::pid()) -&gt; ok</tt><br></p>
+</div>
+
+<h3 class="function"><a name="async_verify_upper-1">async_verify_upper/1</a></h3>
+<div class="spec">
+<p><tt>async_verify_upper(Pid::pid()) -&gt; ok</tt><br></p>
+</div>
+
+<h3 class="function"><a name="code_change-3">code_change/3</a></h3>
+<div class="spec">
+<p><tt>code_change(OldVsn, State, Extra) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="exchange_get-3">exchange_get/3</a></h3>
+<div class="spec">
+<p><tt>exchange_get(Level::term(), Bucket::term(), Pid::pid()) -&gt; any()</tt><br></p>
+</div>
+
+<h3 class="function"><a name="get-2">get/2</a></h3>
+<div class="spec">
+<p><tt>get(Key::term(), Pid::pid()) -&gt; any()</tt><br></p>
+</div>
+
+<h3 class="function"><a name="handle_call-3">handle_call/3</a></h3>
+<div class="spec">
+<p><tt>handle_call(Request, From, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="handle_cast-2">handle_cast/2</a></h3>
+<div class="spec">
+<p><tt>handle_cast(Msg, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="handle_info-2">handle_info/2</a></h3>
+<div class="spec">
+<p><tt>handle_info(Info, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="height-1">height/1</a></h3>
+<div class="spec">
+<p><tt>height(Pid::pid()) -&gt; pos_integer()</tt><br></p>
+</div>
+
+<h3 class="function"><a name="init-1">init/1</a></h3>
+<div class="spec">
+<p><tt>init(X1) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="insert-3">insert/3</a></h3>
+<div class="spec">
+<p><tt>insert(Key::term(), ObjHash::term(), Pid::pid()) -&gt; ok | corrupted</tt><br></p>
+</div>
+
+<h3 class="function"><a name="rehash-1">rehash/1</a></h3>
+<div class="spec">
+<p><tt>rehash(Pid::pid()) -&gt; ok</tt><br></p>
+</div>
+
+<h3 class="function"><a name="rehash_upper-1">rehash_upper/1</a></h3>
+<div class="spec">
+<p><tt>rehash_upper(Pid::pid()) -&gt; ok</tt><br></p>
+</div>
+
+<h3 class="function"><a name="repair-1">repair/1</a></h3>
+<div class="spec">
+<p><tt>repair(Pid::pid()) -&gt; ok</tt><br></p>
+</div>
+
+<h3 class="function"><a name="start_link-3">start_link/3</a></h3>
+<div class="spec">
+<p><tt>start_link(Id, TreeId, Path) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="terminate-2">terminate/2</a></h3>
+<div class="spec">
+<p><tt>terminate(Reason, State) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="top_hash-1">top_hash/1</a></h3>
+<div class="spec">
+<p><tt>top_hash(Pid::pid()) -&gt; any()</tt><br></p>
+</div>
+
+<h3 class="function"><a name="verify-1">verify/1</a></h3>
+<div class="spec">
+<p><tt>verify(Pid::pid()) -&gt; boolean()</tt><br></p>
+</div>
+
+<h3 class="function"><a name="verify_upper-1">verify_upper/1</a></h3>
+<div class="spec">
+<p><tt>verify_upper(Pid::pid()) -&gt; boolean()</tt><br></p>
+</div>
+<hr>
+
+<div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<p><i>Generated by EDoc, Aug 14 2014, 14:20:45.</i></p>
+</body>
+</html>

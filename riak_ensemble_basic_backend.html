@@ -27,24 +27,45 @@ is synchronously written to disk on each put.</p>
   etc.
 <h2><a name="types">Data Types</a></h2>
 
+<h3 class="typedecl"><a name="type-ensemble_id">ensemble_id()</a></h3>
+<p><tt>ensemble_id() = term()</tt></p>
+
+
+<h3 class="typedecl"><a name="type-epoch">epoch()</a></h3>
+<p><tt>epoch() = integer()</tt></p>
+
+
 <h3 class="typedecl"><a name="type-key">key()</a></h3>
 <p><tt>key() = any()</tt></p>
 
 
 <h3 class="typedecl"><a name="type-obj">obj()</a></h3>
-<p><tt>obj() = #obj{}</tt></p>
+<p><tt>obj() = #obj{epoch = undefined | <a href="#type-epoch">epoch()</a>, seq = undefined | <a href="#type-seq">seq()</a>, key = undefined | term(), value = undefined | term()}</tt></p>
+
+
+<h3 class="typedecl"><a name="type-peer_id">peer_id()</a></h3>
+<p><tt>peer_id() = {term(), node()}</tt></p>
+
+
+<h3 class="typedecl"><a name="type-seq">seq()</a></h3>
+<p><tt>seq() = integer()</tt></p>
 
 
 <h3 class="typedecl"><a name="type-state">state()</a></h3>
-<p><tt>state() = #state{}</tt></p>
+<p><tt>state() = #state{savefile = undefined | <a href="file.html#type-filename">file:filename()</a>, id = undefined | <a href="#type-peer_id">peer_id()</a>, data = undefined | <a href="orddict.html#type-orddict">orddict:orddict()</a>}</tt></p>
 
 
 <h3 class="typedecl"><a name="type-value">value()</a></h3>
 <p><tt>value() = any()</tt></p>
 
 
+<h3 class="typedecl"><a name="type-views">views()</a></h3>
+<p><tt>views() = [[<a href="#type-peer_id">peer_id()</a>]]</tt></p>
+
+
 <h2><a name="index">Function Index</a></h2>
 <table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#get-3">get/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#handle_down-4">handle_down/4</a></td><td></td></tr>
 <tr><td valign="top"><a href="#init-3">init/3</a></td><td></td></tr>
 <tr><td valign="top"><a href="#new_obj-4">new_obj/4</a></td><td></td></tr>
 <tr><td valign="top"><a href="#obj_epoch-1">obj_epoch/1</a></td><td></td></tr>
@@ -53,13 +74,12 @@ is synchronously written to disk on each put.</p>
 <tr><td valign="top"><a href="#obj_value-1">obj_value/1</a></td><td></td></tr>
 <tr><td valign="top"><a href="#ping-2">ping/2</a></td><td></td></tr>
 <tr><td valign="top"><a href="#put-4">put/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#ready_to_start-0">ready_to_start/0</a></td><td></td></tr>
 <tr><td valign="top"><a href="#set_obj_epoch-2">set_obj_epoch/2</a></td><td></td></tr>
 <tr><td valign="top"><a href="#set_obj_seq-2">set_obj_seq/2</a></td><td></td></tr>
 <tr><td valign="top"><a href="#set_obj_value-2">set_obj_value/2</a></td><td></td></tr>
-<tr><td valign="top"><a href="#sync-2">sync/2</a></td><td></td></tr>
-<tr><td valign="top"><a href="#sync_request-2">sync_request/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#synctree_path-2">synctree_path/2</a></td><td></td></tr>
 <tr><td valign="top"><a href="#tick-5">tick/5</a></td><td></td></tr>
-<tr><td valign="top"><a href="#trusted-1">trusted/1</a></td><td></td></tr>
 </table>
 
 <h2><a name="functions">Function Details</a></h2>
@@ -67,6 +87,11 @@ is synchronously written to disk on each put.</p>
 <h3 class="function"><a name="get-3">get/3</a></h3>
 <div class="spec">
 <p><tt>get(Key::<a href="#type-key">key()</a>, From::<a href="riak_ensemble_backend.html#type-from">riak_ensemble_backend:from()</a>, State::<a href="#type-state">state()</a>) -&gt; <a href="#type-state">state()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="handle_down-4">handle_down/4</a></h3>
+<div class="spec">
+<p><tt>handle_down(Ref::reference(), Pid::pid(), Reason::term(), State::<a href="#type-state">state()</a>) -&gt; false</tt><br></p>
 </div>
 
 <h3 class="function"><a name="init-3">init/3</a></h3>
@@ -109,6 +134,11 @@ is synchronously written to disk on each put.</p>
 <p><tt>put(Key::<a href="#type-key">key()</a>, Obj::<a href="#type-obj">obj()</a>, From::<a href="riak_ensemble_backend.html#type-from">riak_ensemble_backend:from()</a>, State::<a href="#type-state">state()</a>) -&gt; <a href="#type-state">state()</a></tt><br></p>
 </div>
 
+<h3 class="function"><a name="ready_to_start-0">ready_to_start/0</a></h3>
+<div class="spec">
+<p><tt>ready_to_start() -&gt; any()</tt></p>
+</div>
+
 <h3 class="function"><a name="set_obj_epoch-2">set_obj_epoch/2</a></h3>
 <div class="spec">
 <p><tt>set_obj_epoch(Epoch::<a href="#type-epoch">epoch()</a>, Obj::<a href="#type-obj">obj()</a>) -&gt; <a href="#type-obj">obj()</a></tt><br></p>
@@ -124,28 +154,18 @@ is synchronously written to disk on each put.</p>
 <p><tt>set_obj_value(Value::<a href="#type-value">value()</a>, Obj::<a href="#type-obj">obj()</a>) -&gt; <a href="#type-obj">obj()</a></tt><br></p>
 </div>
 
-<h3 class="function"><a name="sync-2">sync/2</a></h3>
+<h3 class="function"><a name="synctree_path-2">synctree_path/2</a></h3>
 <div class="spec">
-<p><tt>sync(OtherData::[{<a href="#type-peer_id">peer_id()</a>, <a href="orddict.html#type-orddict">orddict:orddict()</a>}], State::<a href="#type-state">state()</a>) -&gt; {ok, <a href="#type-state">state()</a>} | {async, <a href="#type-state">state()</a>} | {{error, term()}, <a href="#type-state">state()</a>}</tt><br></p>
-</div>
-
-<h3 class="function"><a name="sync_request-2">sync_request/2</a></h3>
-<div class="spec">
-<p><tt>sync_request(From::<a href="riak_ensemble_backend.html#type-from">riak_ensemble_backend:from()</a>, State::<a href="#type-state">state()</a>) -&gt; <a href="#type-state">state()</a></tt><br></p>
+<p><tt>synctree_path(Ensemble, Id) -&gt; any()</tt></p>
 </div>
 
 <h3 class="function"><a name="tick-5">tick/5</a></h3>
 <div class="spec">
 <p><tt>tick(Epoch::<a href="#type-epoch">epoch()</a>, Seq::<a href="#type-seq">seq()</a>, Leader::<a href="#type-peer_id">peer_id()</a>, Views::<a href="#type-views">views()</a>, State::<a href="#type-state">state()</a>) -&gt; <a href="#type-state">state()</a></tt><br></p>
 </div>
-
-<h3 class="function"><a name="trusted-1">trusted/1</a></h3>
-<div class="spec">
-<p><tt>trusted(State) -&gt; any()</tt></p>
-</div>
 <hr>
 
 <div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
-<p><i>Generated by EDoc, Jun 11 2014, 15:43:21.</i></p>
+<p><i>Generated by EDoc, Aug 14 2014, 14:20:45.</i></p>
 </body>
 </html>

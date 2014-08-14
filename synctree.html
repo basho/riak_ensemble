@@ -1,0 +1,270 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1">
+<title>Module synctree</title>
+<link rel="stylesheet" type="text/css" href="stylesheet.css" title="EDoc">
+</head>
+<body bgcolor="white">
+<div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<hr>
+
+<h1>Module synctree</h1>
+<ul class="index"><li><a href="#description">Description</a></li><li><a href="#types">Data Types</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>  
+This module implements a self-validating hashtree that is used within  
+riak_ensemble as the primary data integrity mechanism.
+
+
+<h2><a name="description">Description</a></h2><p>  
+This module implements a self-validating hashtree that is used within  
+riak_ensemble as the primary data integrity mechanism. This tree is  
+designed similar to the hashtree used in file systems such as ZFS, with  
+parent nodes containing the hash of their children. Thus, during traversal  
+a tree path can be completely verified from the root node to the endpoint.</p>
+ 
+  <p>This tree is designed to be replicated on multiple nodes and provides  
+built-in exchange logic that efficiently determines the differences between  
+two trees -- thus trees can exchange with peers and heal missing/corrupted  
+data.</p>
+ 
+  <p>To perform an exchange, trees must be of the same shape regardless of the  
+data inserted. Thus, the tree implemented by this module has a fixed  
+structure and is therefore more akin to a hash trie. To enable this fixed  
+structure, data inserted into the tree is uniformly mapped to one of a fixed  
+number of segments. These segments are sorted key/value lists. Hashes are  
+computed over each segment, with each hash being stored as a leaf in the  
+actual hash tree. Since there are a fixed number of segments, there is a  
+fixed number of leaf hashes. The remaining levels in the hash tree are then  
+generated on top of these leaf hashes as normal.</p>
+ 
+  <p>This design is therefore similar to hashtree.erl from riak_core.</p>
+ 
+  <p>The main high-levels differences are as follows:    
+1. The synctree is built entirely on pure key/value (get/put) operations,       
+there is no concept of iteration nor any need for a sorted backend.</p>
+ 
+    <p>2. The synctree is always up-to-date. An insert into the tree immediately       
+updates the appropriate segment and relevant tree path. There is no       
+concept of a delayed, bulk update as used by hashtree.erl</p>
+ 
+    <p>3. All operations on the tree are self-validating. Every traversal through       
+the tree whether for reads, inserts, or exchanges verifies the hashes       
+down all encountered tree paths.</p>
+ 
+    <p>4. The synctree supports pluggable backends. It was originally designed       
+and tested against both orddict and ETS backends, and then later       
+extended with a LevelDB backend for persistent storage as used in       
+riak_ensemble.</p>
+ 
+  <p>Most of the differences from hashtree.erl are not strictly better, but  
+rather are designed to address differences between Riak AAE (which uses  
+hashtree) and riak_ensemble integrity checking (which uses synctree).</p>
+ 
+  Specifically, AAE is designed to be a fast, mostly background process
+  with limited impact on normal Riak operations. While the integrity logic
+  requires an always up-to-date tree that is used to verify every get/put
+  operation as they occur, ensuring 100% validity. In other terms, for AAE
+  the hashtree is not expected to be the truth but rather a best-effort
+  projection of the truth (the K/V backend is the truth). Whereas for the
+  integrity logic, the synctree is the truth -- if the backend differs, it's
+  wrong and we consider the backend data corrupted.
+<h2><a name="types">Data Types</a></h2>
+
+<h3 class="typedecl"><a name="type-action">action()</a></h3>
+<p><tt>action() = {put, term(), term()} | {delete, term()}</tt></p>
+
+
+<h3 class="typedecl"><a name="type-bucket">bucket()</a></h3>
+<p><tt>bucket() = non_neg_integer()</tt></p>
+
+
+<h3 class="typedecl"><a name="type-corrupted">corrupted()</a></h3>
+<p><tt>corrupted() = {corrupted, <a href="#type-level">level()</a>, <a href="#type-bucket">bucket()</a>}</tt></p>
+
+
+<h3 class="typedecl"><a name="type-hash">hash()</a></h3>
+<p><tt>hash() = binary()</tt></p>
+
+
+<h3 class="typedecl"><a name="type-hashes">hashes()</a></h3>
+<p><tt>hashes() = [{term(), <a href="#type-hash">hash()</a>}]</tt></p>
+
+
+<h3 class="typedecl"><a name="type-key">key()</a></h3>
+<p><tt>key() = term()</tt></p>
+
+
+<h3 class="typedecl"><a name="type-level">level()</a></h3>
+<p><tt>level() = non_neg_integer()</tt></p>
+
+
+<h3 class="typedecl"><a name="type-maybe_integer">maybe_integer()</a></h3>
+<p><tt>maybe_integer() = pos_integer() | default</tt></p>
+
+
+<h3 class="typedecl"><a name="type-options">options()</a></h3>
+<p><tt>options() = <a href="proplists.html#type-proplist">proplists:proplist()</a></tt></p>
+
+
+<h3 class="typedecl"><a name="type-tree">tree()</a></h3>
+<p><tt>tree() = #tree{id = undefined | term(), width = undefined | pos_integer(), segments = undefined | pos_integer(), height = undefined | pos_integer(), shift = undefined | pos_integer(), shift_max = undefined | pos_integer(), top_hash = undefined | <a href="#type-hash">hash()</a>, buffer = undefined | [<a href="#type-action">action()</a>], buffered = undefined | non_neg_integer(), mod = undefined | module(), modstate = undefined | any()}</tt></p>
+
+
+<h3 class="typedecl"><a name="type-value">value()</a></h3>
+<p><tt>value() = binary()</tt></p>
+
+
+<h2><a name="index">Function Index</a></h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#compare-3">compare/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#compare-4">compare/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#compare-5">compare/5</a></td><td></td></tr>
+<tr><td valign="top"><a href="#corrupt-2">corrupt/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#direct_exchange-1">direct_exchange/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#exchange_get-3">exchange_get/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#get-2">get/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#height-1">height/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#insert-3">insert/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#local_compare-2">local_compare/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#m_batch-2">m_batch/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#m_flush-1">m_flush/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#new-0">new/0</a></td><td></td></tr>
+<tr><td valign="top"><a href="#new-1">new/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#new-3">new/3</a></td><td></td></tr>
+<tr><td valign="top"><a href="#new-4">new/4</a></td><td></td></tr>
+<tr><td valign="top"><a href="#new-5">new/5</a></td><td></td></tr>
+<tr><td valign="top"><a href="#newdb-1">newdb/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#newdb-2">newdb/2</a></td><td></td></tr>
+<tr><td valign="top"><a href="#rehash-1">rehash/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#rehash_upper-1">rehash_upper/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#top_hash-1">top_hash/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#verify-1">verify/1</a></td><td></td></tr>
+<tr><td valign="top"><a href="#verify_upper-1">verify_upper/1</a></td><td></td></tr>
+</table>
+
+<h2><a name="functions">Function Details</a></h2>
+
+<h3 class="function"><a name="compare-3">compare/3</a></h3>
+<div class="spec">
+<p><tt>compare(Height, Local, Remote) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="compare-4">compare/4</a></h3>
+<div class="spec">
+<p><tt>compare(Height, Local, Remote, AccFun) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="compare-5">compare/5</a></h3>
+<div class="spec">
+<p><tt>compare(Height, Local, Remote, AccFun, Opts) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="corrupt-2">corrupt/2</a></h3>
+<div class="spec">
+<p><tt>corrupt(Key::<a href="#type-key">key()</a>, Tree::<a href="#type-tree">tree()</a>) -&gt; <a href="#type-tree">tree()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="direct_exchange-1">direct_exchange/1</a></h3>
+<div class="spec">
+<p><tt>direct_exchange(Tree) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="exchange_get-3">exchange_get/3</a></h3>
+<div class="spec">
+<p><tt>exchange_get(Level::<a href="#type-bucket">bucket()</a>, Bucket::<a href="#type-level">level()</a>, Tree::<a href="#type-tree">tree()</a>) -&gt; <a href="#type-hashes">hashes()</a> | <a href="#type-corrupted">corrupted()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="get-2">get/2</a></h3>
+<div class="spec">
+<p><tt>get(Key::<a href="#type-key">key()</a>, Tree::<a href="#type-tree">tree()</a>) -&gt; <a href="#type-value">value()</a> | notfound | <a href="#type-corrupted">corrupted()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="height-1">height/1</a></h3>
+<div class="spec">
+<p><tt>height(Tree::<a href="#type-tree">tree()</a>) -&gt; pos_integer()</tt><br></p>
+</div>
+
+<h3 class="function"><a name="insert-3">insert/3</a></h3>
+<div class="spec">
+<p><tt>insert(Key::<a href="#type-key">key()</a>, Value::<a href="#type-value">value()</a>, Tree::<a href="#type-tree">tree()</a>) -&gt; <a href="#type-tree">tree()</a> | <a href="#type-corrupted">corrupted()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="local_compare-2">local_compare/2</a></h3>
+<div class="spec">
+<p><tt>local_compare(T1, T2) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="m_batch-2">m_batch/2</a></h3>
+<div class="spec">
+<p><tt>m_batch(Update, Tree) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="m_flush-1">m_flush/1</a></h3>
+<div class="spec">
+<p><tt>m_flush(Tree) -&gt; any()</tt></p>
+</div>
+
+<h3 class="function"><a name="new-0">new/0</a></h3>
+<div class="spec">
+<p><tt>new() -&gt; <a href="#type-tree">tree()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="new-1">new/1</a></h3>
+<div class="spec">
+<p><tt>new(Id::term()) -&gt; <a href="#type-tree">tree()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="new-3">new/3</a></h3>
+<div class="spec">
+<p><tt>new(Id::term(), Width::<a href="#type-maybe_integer">maybe_integer()</a>, Segments::<a href="#type-maybe_integer">maybe_integer()</a>) -&gt; <a href="#type-tree">tree()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="new-4">new/4</a></h3>
+<div class="spec">
+<p><tt>new(Id::term(), Width::<a href="#type-maybe_integer">maybe_integer()</a>, Segments::<a href="#type-maybe_integer">maybe_integer()</a>, Mod::module()) -&gt; <a href="#type-tree">tree()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="new-5">new/5</a></h3>
+<div class="spec">
+<p><tt>new(Id::term(), Width::<a href="#type-maybe_integer">maybe_integer()</a>, Segments::<a href="#type-maybe_integer">maybe_integer()</a>, Mod::module(), Opts::<a href="#type-options">options()</a>) -&gt; <a href="#type-tree">tree()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="newdb-1">newdb/1</a></h3>
+<div class="spec">
+<p><tt>newdb(Id::term()) -&gt; <a href="#type-tree">tree()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="newdb-2">newdb/2</a></h3>
+<div class="spec">
+<p><tt>newdb(Id::term(), Opts::<a href="#type-options">options()</a>) -&gt; <a href="#type-tree">tree()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="rehash-1">rehash/1</a></h3>
+<div class="spec">
+<p><tt>rehash(Tree::<a href="#type-tree">tree()</a>) -&gt; <a href="#type-tree">tree()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="rehash_upper-1">rehash_upper/1</a></h3>
+<div class="spec">
+<p><tt>rehash_upper(Tree::<a href="#type-tree">tree()</a>) -&gt; <a href="#type-tree">tree()</a></tt><br></p>
+</div>
+
+<h3 class="function"><a name="top_hash-1">top_hash/1</a></h3>
+<div class="spec">
+<p><tt>top_hash(Tree::<a href="#type-tree">tree()</a>) -&gt; <a href="#type-hash">hash()</a> | undefined</tt><br></p>
+</div>
+
+<h3 class="function"><a name="verify-1">verify/1</a></h3>
+<div class="spec">
+<p><tt>verify(Tree::<a href="#type-tree">tree()</a>) -&gt; boolean()</tt><br></p>
+</div>
+
+<h3 class="function"><a name="verify_upper-1">verify_upper/1</a></h3>
+<div class="spec">
+<p><tt>verify_upper(Tree::<a href="#type-tree">tree()</a>) -&gt; boolean()</tt><br></p>
+</div>
+<hr>
+
+<div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<p><i>Generated by EDoc, Aug 14 2014, 14:20:46.</i></p>
+</body>
+</html>
