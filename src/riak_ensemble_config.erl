@@ -32,7 +32,7 @@ tick() ->
 %% the leader time to refresh before expiration, but lower than the follower
 %% timeout.
 lease() ->
-    get_env(lease_duration, tick() * 2 div 3).
+    get_env(lease_duration, tick() * 3 div 2).
 
 %% @doc
 %% This setting determines if leader leases are trusted or not. Trusting the
