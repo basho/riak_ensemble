@@ -174,8 +174,4 @@ timestamp({Mega, Secs, Micro}) ->
     Mega*1000*1000*1000*1000 + Secs * 1000 * 1000 + Micro.
 
 leveldb_opts() ->
-    [{is_internal_db, true},
-     {write_buffer_size, 4 * 1024 * 1024},
-     {use_bloomfilter, true},
-     {create_if_missing, true}].
-
+    riak_ensemble_config:synctree_leveldb_opts().
