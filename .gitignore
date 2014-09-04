@@ -1,0 +1,6 @@
+*.beam
+*.eqc
+.eunit/*
+ebin
+.local_dialyzer_plt
+deps/*

@@ -1,0 +1,7 @@
+#!/bin/sh
+if [ "eunit" = "$3" ]; then
+    echo "Buildbot hack: overriding rebar -v skip_deps=true eunit -> make test"
+    make runtests
+else
+    ./rebar.real $@
+fi

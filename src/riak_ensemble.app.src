@@ -1,0 +1,12 @@
+{application, riak_ensemble,
+ [
+  {description, ""},
+  {vsn, git},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {mod, { riak_ensemble_app, []}},
+  {env, []}
+ ]}.
