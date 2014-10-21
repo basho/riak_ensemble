@@ -1,4 +1,4 @@
-(TODO: Better README, better docs. Plenty of pretty pictures)
+(Note: Work-in-progress documentation [here](https://github.com/basho/riak_ensemble/blob/develop/doc/Readme.md))
 
 `riak_ensemble` is a consensus library that supports creating multiple
 consensus groups (ensembles). Each ensemble is a separate multi-paxos
