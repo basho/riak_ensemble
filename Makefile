@@ -3,7 +3,7 @@ DIALYZER_FLAGS ?= -Wunmatched_returns -Werror_handling -Wrace_conditions
 
 .PHONY: all compile clean deps test dialyzer typer
 
-all: deps compile xref dialyzer runtests
+all: deps compile
 
 clean:
 	$(REBAR) clean
@@ -19,10 +19,7 @@ testdeps: deps
 	$(REBAR) -C rebar.test.config get-deps
 	$(REBAR) -C rebar.test.config compile
 
-test: failtest
-
-failtest:
-	$(error Do not use 'make test', use 'make runtests')
+test: runtests
 
 runtests: testdeps compile
 	bash test/run.sh
