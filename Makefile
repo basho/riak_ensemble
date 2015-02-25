@@ -19,8 +19,6 @@ testdeps: deps
 	$(REBAR) -C rebar.test.config get-deps
 	$(REBAR) -C rebar.test.config compile
 
-test: failtest
-
 failtest:
 	$(error Do not use 'make test', use 'make runtests')
 
@@ -36,3 +34,6 @@ ifeq ($(REBAR),)
 $(error "Rebar not found. Please set REBAR variable or update PATH")
 endif
 
+## Override test after tools.mk; use custom test runner for isolation.
+test: testdeps
+	bash test/run.sh
