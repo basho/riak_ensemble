@@ -1,6 +1,8 @@
 -module(sc).
 -compile(export_all).
 
+-ifdef(EQC).
+
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -1065,3 +1067,5 @@ wait_until_quorum(Retry, Ensemble, Node) ->
             timer:sleep(100),
             wait_until_quorum(Retry-1, Ensemble, Node)
     end.
+
+-endif.
