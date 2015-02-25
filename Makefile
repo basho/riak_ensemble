@@ -3,7 +3,7 @@ DIALYZER_FLAGS ?= -Wunmatched_returns -Werror_handling -Wrace_conditions
 
 .PHONY: all compile clean deps test dialyzer typer
 
-all: deps compile xref dialyzer runtests
+all: deps compile
 
 clean:
 	$(REBAR) clean
@@ -18,11 +18,6 @@ compile:
 testdeps: deps
 	$(REBAR) -C rebar.test.config get-deps
 	$(REBAR) -C rebar.test.config compile
-
-test: failtest
-
-failtest:
-	$(error Do not use 'make test', use 'make runtests')
 
 runtests: testdeps compile
 	bash test/run.sh
@@ -39,3 +34,6 @@ ifeq ($(REBAR),)
 $(error "Rebar not found. Please set REBAR variable or update PATH")
 endif
 
+## Override test after tools.mk; use custom test runner for isolation.
+test: testdeps
+	bash test/run.sh
