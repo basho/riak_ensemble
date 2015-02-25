@@ -35,5 +35,5 @@ $(error "Rebar not found. Please set REBAR variable or update PATH")
 endif
 
 ## Override test after tools.mk; use custom test runner for isolation.
-test:
+test: testdeps
 	bash test/run.sh
