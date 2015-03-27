@@ -1528,7 +1528,25 @@ is_current(Obj, Key, KnownHash, State) ->
 
 -spec update_key(_,_,_,state()) -> {ok, obj(), state()} | {failed,state()} | {corrupted,state()}.
 update_key(Key, Local, KnownHash, State) ->
+    NumPeers = length(get_peers(State#state.members, State)),
     case get_latest_obj(Key, Local, KnownHash, State) of
+        {ok, Latest, Replies, State2} when
+              Latest =:= notfound andalso
+              (length(Replies) + 1) =:= NumPeers ->
+            %% If we get a reply back from every other node and find that
+            %% nobody has a copy, we can safely skip writing a tombstone.
+            %% (The + 1 in the guard above is due to the fact that we don't
+            %% expect a reply from ourselves, since if we get here then we
+            %% already did a local get directly and got notfound.)
+            ?OUT("Got back notfound from every peer! Skipping tombstone for key ~p", [Key]),
+
+            %% The client expects an object, but in this case we don't have
+            %% one, so create a "fake" notfound object to pass back.
+            Seq = obj_sequence(State2),
+            Epoch = epoch(State2),
+            New = new_obj(Epoch, Seq, Key, notfound, State2),
+
+            {ok, New, State2};
         {ok, Latest, _Replies, State2} ->
             case put_obj(Key, Latest, State2) of
                 {ok, New, State3} ->
@@ -1590,7 +1608,11 @@ get_latest_obj(Key, Local, KnownHash, State=#state{id=Id, members=Members}) ->
                  false ->
                      Check
              end,
-    {Future, State2} = blocking_send_all({get, Key, Id, Epoch}, Peers, quorum, Check2, State),
+    Required = case KnownHash of
+                   notfound -> all_or_quorum;
+                   _ ->        quorum
+               end,
+    {Future, State2} = blocking_send_all({get, Key, Id, Epoch}, Peers, Required, Check2, State),
     case wait_for_quorum(Future) of
         {quorum_met, Replies} ->
             Latest = latest_obj(Replies, Local, State),
