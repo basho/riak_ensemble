@@ -281,8 +281,8 @@ check_enough(Collect=#collect{id=Id,
 
 -spec try_collect_all(#collect{}) -> _.
 try_collect_all(Collect=#collect{reqid=ReqId}) ->
-    %% FIXME make this timeout configurable:
-    erlang:send_after(1000, self(), {try_collect_all_timeout, ReqId}),
+    Timeout = riak_ensemble_config:notfound_read_delay(),
+    erlang:send_after(Timeout, self(), {try_collect_all_timeout, ReqId}),
     try_collect_all_impl(Collect).
 
 try_collect_all_impl(Collect=#collect{id=Id,
