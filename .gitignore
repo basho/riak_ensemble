@@ -6,4 +6,5 @@ ebin
 deps/*
 edoc
 .rebar
-
+c_src
+priv  
