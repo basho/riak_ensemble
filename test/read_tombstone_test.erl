@@ -19,9 +19,9 @@ scenario() ->
     ens_test:wait_stable(root),
     application:set_env(riak_ensemble, notfound_read_delay, 3000),
 
-    Ensembles = riak_ensemble_manager:get_members(root),
+    Peers = riak_ensemble_manager:get_members(root),
     Leader = riak_ensemble_manager:get_leader(root),
-    [Follow1, Follow2] = Ensembles -- [Leader],
+    [Follow1, Follow2] = Peers -- [Leader],
 
     ?debugMsg("Running kget on a nonexistent key"),
     {ok, _} = ens_test:kget(<<"test">>),
