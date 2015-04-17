@@ -30,6 +30,7 @@
 -export([join/2, join/3, update_members/3, get_leader/1, backend_pong/1]).
 -export([kget/4, kget/5, kupdate/6, kput_once/5, kover/5, kmodify/6, kdelete/4,
          ksafe_delete/5, obj_value/2, obj_value/3]).
+-export([debug_local_get/2]).
 -export([setup/2]).
 -export([probe/2, election/2, prepare/2, leading/2, following/2,
          probe/3, election/3, prepare/3, leading/3, following/3]).
@@ -321,6 +322,13 @@ local_get(Pid, Key, Timeout) when is_pid(Pid) ->
 -spec local_put(pid(), term(), term(), timeout()) -> fixme().
 local_put(Pid, Key, Obj, Timeout) when is_pid(Pid) ->
     riak_ensemble_router:sync_send_event(Pid, {local_put, Key, Obj}, Timeout).
+
+%% Acts like local_get, but can be used for any peer, not just the leader.
+%% Should only be used for testing purposes, since values obtained via
+%% this function provide no consistency guarantees whatsoever.
+-spec debug_local_get(pid(), term()) -> std_reply().
+debug_local_get(Pid, Key) ->
+    gen_fsm:sync_send_all_state_event(Pid, {debug_local_get, Key}).
 
 %%%===================================================================
 %%% Core Protocol
@@ -1528,7 +1536,25 @@ is_current(Obj, Key, KnownHash, State) ->
 
 -spec update_key(_,_,_,state()) -> {ok, obj(), state()} | {failed,state()} | {corrupted,state()}.
 update_key(Key, Local, KnownHash, State) ->
+    NumPeers = length(get_peers(State#state.members, State)),
     case get_latest_obj(Key, Local, KnownHash, State) of
+        {ok, Latest, Replies, State2} when
+              Latest =:= notfound andalso
+              (length(Replies) + 1) =:= NumPeers ->
+            %% If we get a reply back from every other node and find that
+            %% nobody has a copy, we can safely skip writing a tombstone.
+            %% (The + 1 in the guard above is due to the fact that we don't
+            %% expect a reply from ourselves, since if we get here then we
+            %% already did a local get directly and got notfound.)
+            ?OUT("Got back notfound from every peer! Skipping tombstone for key ~p", [Key]),
+
+            %% The client expects an object, but in this case we don't have
+            %% one, so create a "fake" notfound object to pass back.
+            Seq = obj_sequence(State2),
+            Epoch = epoch(State2),
+            New = new_obj(Epoch, Seq, Key, notfound, State2),
+
+            {ok, New, State2};
         {ok, Latest, _Replies, State2} ->
             case put_obj(Key, Latest, State2) of
                 {ok, New, State3} ->
@@ -1590,7 +1616,11 @@ get_latest_obj(Key, Local, KnownHash, State=#state{id=Id, members=Members}) ->
                  false ->
                      Check
              end,
-    {Future, State2} = blocking_send_all({get, Key, Id, Epoch}, Peers, quorum, Check2, State),
+    Required = case KnownHash of
+                   notfound -> all_or_quorum;
+                   _ ->        quorum
+               end,
+    {Future, State2} = blocking_send_all({get, Key, Id, Epoch}, Peers, Required, Check2, State),
     case wait_for_quorum(Future) of
         {quorum_met, Replies} ->
             Latest = latest_obj(Replies, Local, State),
@@ -1827,6 +1857,9 @@ handle_sync_event(tree_info, _From, StateName, State=#state{tree_trust=Trust,
     TopHash = riak_ensemble_peer_tree:top_hash(Pid),
     Info = {Trust, Ready, TopHash},
     {reply, Info, StateName, State};
+handle_sync_event({debug_local_get, Key}, From, StateName, State) ->
+    State2 = do_local_get(From, Key, State),
+    {next_state, StateName, State2};
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.
