@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2015 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -32,6 +32,8 @@
 -type orddict() :: orddict:orddict().
 
 %%===================================================================
+
+-include_lib("otp_compat/include/crypto_hash.hrl").
 
 -spec replace_file(file:filename(), iodata()) -> ok | {error, term()}.
 replace_file(FN, Data) ->
@@ -81,27 +83,13 @@ read_file(FD, Acc) ->
 
 %%===================================================================
 
--ifndef(old_hash).
-
 -spec sha(iolist() | binary()) -> binary().
 sha(Bin) ->
-    crypto:hash(sha, Bin).
+    ?crypto_hash_sha(Bin).
 
 -spec md5(iolist() | binary()) -> binary().
 md5(Bin) ->
-    crypto:hash(md5, Bin).
-
--else.
-
--spec sha(iolist() | binary()) -> binary().
-sha(Bin) ->
-    crypto:sha(Bin).
-
--spec md5(iolist() | binary()) -> binary().
-md5(Bin) ->
-    crypto:md5(Bin).
-
--endif.
+    ?crypto_hash_md5(Bin).
 
 %%===================================================================
 
