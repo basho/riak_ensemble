@@ -54,8 +54,8 @@
 -export([init/1, handle_event/3, handle_sync_event/4, handle_info/3,
          terminate/3, code_change/4]).
 
-%% -define(OUT(Fmt,Args), io:format(Fmt,Args)).
--define(OUT(Fmt,Args), ok).
+-define(OUT(Fmt,Args), lager:info(Fmt,Args)).
+%%-define(OUT(Fmt,Args), ok).
 
 -define(REQUEST_TIMEOUT, 30000).
 
