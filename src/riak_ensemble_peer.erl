@@ -65,6 +65,7 @@
 -define(FOLLOWER_TIMEOUT,  riak_ensemble_config:follower_timeout()).
 -define(PENDING_TIMEOUT,   riak_ensemble_config:pending_timeout()).
 -define(ELECTION_TIMEOUT,  riak_ensemble_config:election_timeout()).
+-define(PELECTION_TIMEOUT, riak_ensemble_config:pelection_timeout()).
 -define(PREFOLLOW_TIMEOUT, riak_ensemble_config:prefollow_timeout()).
 -define(PROBE_DELAY,       riak_ensemble_config:probe_delay()).
 -define(LOCAL_GET_TIMEOUT, riak_ensemble_config:local_get_timeout()).
@@ -135,7 +136,8 @@
                 async         :: pid(),
                 tree          :: pid(),
                 lease         :: riak_ensemble_lease:lease_ref(),
-                self          :: pid()
+                self          :: pid(),
+                pleader       :: peer_id()
                }).
 
 -type state() :: #state{}.
@@ -337,7 +339,7 @@ debug_local_get(Pid, Key) ->
 -spec probe(_, state()) -> next_state().
 probe(init, State) ->
     ?OUT("~p: probe~n", [State#state.id]),
-    State2 = set_leader(undefined, State),
+    State2 = clear_or_preferred_leader(State),
     case is_pending(State2) of
         true ->
             pending(init, State2);
@@ -466,7 +468,12 @@ start_exchange(State=#state{id=Id, ensemble=Ensemble, tree=Tree, members=Members
 election(init, State) ->
     %% io:format("~p/~p: starting election~n", [self(), State#state.id]),
     ?OUT("~p: starting election~n", [State#state.id]),
-    State2 = set_timer(?ELECTION_TIMEOUT, election_timeout, State),
+    State2 = case is_preffered_leader(State) of
+                 true->
+                     set_timer(?PELECTION_TIMEOUT, election_timeout, State);
+                 _ ->
+                     set_timer(?ELECTION_TIMEOUT, election_timeout, State)
+             end,
     {next_state, election, State2};
 election(election_timeout, State) ->
     case mod_ping(State) of
@@ -620,6 +627,19 @@ leading({forward, From, Msg}, State) ->
         {next_state, StateName, State2} ->
             {next_state, StateName, State2}
     end;
+%%Follower defined by user as preferred may send request to change current leader
+leading({change_leader,PLeader},State=#state{fact = Fact,pleader = PLeader})->
+    NewFact = Fact#fact{leader = PLeader},
+    ?OUT("Recive change leader from ~p to ~p~n",[Fact#fact.leader,PLeader]),
+    case try_commit(NewFact,State) of
+        {ok, State2} ->
+            %%TODO may be  go to following state direct
+            ?OUT("Quorum agree change leader from ~p to ~p~n",[Fact#fact.leader,PLeader]),
+            step_down(State2);
+        {failed, State2} ->
+            ?OUT("Failed leader change from ~p to ~p~n",[Fact#fact.leader,PLeader]),
+            step_down(State2)
+    end;
 leading(Msg, State) ->
     common(Msg, State, leading).
 
@@ -723,7 +743,7 @@ update_view([{del, Id}|Rest], Errors, Members, View, Cluster) ->
 -spec should_transition(state()) -> boolean().
 should_transition(State=#state{last_views=LastViews}) ->
     Views = views(State),
-    (Views =:= LastViews) and (tl(views(State)) =/= []).
+    (Views =:= LastViews) and (tl(Views) =/= []).
 
 -spec transition(state()) -> {ok, state()}       |
                              {shutdown, state()} |
@@ -778,15 +798,20 @@ following(exchange_complete, State) ->
 following(exchange_failed, State) ->
     probe(init, State);
 following({commit, Fact, From}, State) ->
-    State3 = case Fact#fact.epoch >= epoch(State) of
-                 true ->
-                     State2 = local_commit(Fact, State),
-                     reply(From, ok, State),
-                     reset_follower_timer(State2);
-                 false ->
-                     State
-             end,
-    {next_state, following, State3};
+    case Fact#fact.epoch >= epoch(State) of
+        true ->
+            State2 = local_commit(Fact, State),
+            reply(From, ok, State),
+            State3 = reset_follower_timer(State2),
+            case maybe_set_preferred_leader(Fact, State3) of
+                true ->
+                    abandon(cancel_timer(State3));
+                _ ->
+                    {next_state, following, State3}
+            end;
+        false ->
+            {next_state, following, State}
+    end;
 %% following({prepare, Id, NextEpoch, From}=Msg, State=#state{fact=Fact}) ->
 %%     Epoch = epoch(State),
 %%     case (Id =:= leader(State)) and (NextEpoch > Epoch) of
@@ -938,6 +963,15 @@ check_views(State=#state{ensemble=Ensemble, fact=Fact}) ->
 -spec set_leader(undefined | {_,atom()},state()) -> state().
 set_leader(Leader, State=#state{fact=Fact}) ->
     State#state{fact=Fact#fact{leader=Leader}}.
+
+-spec clear_or_preferred_leader(state())->state().
+clear_or_preferred_leader(State=#state{fact=Fact})->
+    case is_preffered_leader(State) of
+        true->
+            State#state{fact=Fact#fact{leader=State#state.pleader}};
+        _->
+            State#state{fact=Fact#fact{leader=undefined}}
+    end.
 
 -spec set_epoch(undefined | non_neg_integer(),state()) -> state().
 set_epoch(Epoch, State=#state{fact=Fact}) ->
@@ -1820,12 +1854,14 @@ setup({init, Args}, State0=#state{id=Id, ensemble=Ensemble, ets=ETS, mod=Mod}) -
     Workers = start_workers(NumWorkers, ETS),
     Members = compute_members(Saved#fact.views),
     {ok, Lease} = riak_ensemble_lease:start_link(),
+    {PreferedLeader,UserArgs} = args_transform(Args),
     State = State0#state{workers=list_to_tuple(Workers),
                          tree=Tree,
                          fact=Saved,
                          members=Members,
                          lease=Lease,
-                         modstate=riak_ensemble_backend:start(Mod, Ensemble, Id, Args)},
+                         pleader = PreferedLeader,
+                         modstate=riak_ensemble_backend:start(Mod, Ensemble, Id, UserArgs)},
     State2 = check_views(State),
     %% TODO: Why are we local commiting on startup?
     State3 = local_commit(State2#state.fact, State2),
@@ -2153,3 +2189,44 @@ cancel_timer(State=#state{timer=Timer}) ->
     %% Note: gen_fsm cancel_timer discards timer message if already sent
     catch gen_fsm:cancel_timer(Timer),
     State#state{timer=undefined}.
+
+
+-spec is_preffered_leader(state()) -> boolean().
+is_preffered_leader(#state{pleader = PLeader,id = Leader})->
+    Leader =:= PLeader.
+
+-spec maybe_set_preferred_leader(fact(),state()) -> boolean().
+maybe_set_preferred_leader(NewFact,State=#state{id=Peer})->
+    case is_preffered_leader(State) of
+        true->
+            case NewFact#fact.leader=:=Peer of
+                true->
+                    true;
+                _->
+                    case riak_ensemble_manager:get_leader_pid(State#state.ensemble) of
+                        P when is_pid(P)->
+                            ?OUT("Try change leader to me:~p~n",[Peer]),
+                            gen_fsm:send_event(P,{change_leader,Peer});
+                        _->
+                            ok
+                    end,
+                    false
+            end;
+        _->
+            false
+    end.
+
+-spec args_transform(term()) -> {peer_id(),term()}.
+args_transform(Args)->
+    case riak_ensemble_config:preferred_leading() of
+        true when is_list(Args)->
+            case proplists:get_value(backend,Args) of
+                undefined->
+                    {undefined,Args};
+                BackEndArgs->
+                    PreferredLeader = proplists:get_value(pleader,Args),
+                    {PreferredLeader,BackEndArgs}
+            end;
+        _->
+            {undefined,Args}
+    end.
