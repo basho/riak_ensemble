@@ -54,6 +54,13 @@ election_timeout() ->
     Timeout + random:uniform(Timeout).
 
 %% @doc
+%% The election timeout used for preferred peer.
+%% It must be less than general election timeout.
+pelection_timeout() ->
+    Timeout = follower_timeout(),
+    Timeout.
+
+%% @doc
 %% The prefollow timeout determines how long a peer waits to hear from the
 %% preliminary leader before abandoning it.
 prefollow_timeout() ->
@@ -125,6 +132,13 @@ synchronous_tree_updates() ->
 %% cases where unpredictable latencies necessitate it.
 notfound_read_delay() ->
     get_env(notfound_read_delay, 1).
+
+%% @doc
+%% When true user defined prefered leader will be used during election process
+%% as first canditate for election. If user prefred leader in follower state it will
+%% try become leader. It is allow balancing groups leader beetwen cluster.
+preferred_leading()->
+    get_env(preferred_leading,false).
 
 get_env(Key, Default) ->
     case application:get_env(riak_ensemble, Key) of
