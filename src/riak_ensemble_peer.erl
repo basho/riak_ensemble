@@ -352,7 +352,6 @@ probe({quorum_met, Replies}, State=#state{fact=Fact, abandoned=Abandoned}) ->
     Existing = existing_leader(Replies, Abandoned, Latest),
     State2 = State#state{fact=Latest,
                          members=compute_members(Latest#fact.views)},
-    lager:info("Existing leader ~p latest ~p",[Existing,Latest]),
     %% io:format("Latest: ~p~n", [Latest]),
     maybe_follow(Existing, State2);
 probe({timeout, Replies}, State=#state{fact=Fact}) ->
@@ -628,16 +627,17 @@ leading({forward, From, Msg}, State) ->
         {next_state, StateName, State2} ->
             {next_state, StateName, State2}
     end;
+%%Follower defined by user as preferred may send request to change current leader
 leading({change_leader,PLeader},State=#state{fact = Fact,pleader = PLeader})->
     NewFact = Fact#fact{leader = PLeader},
-    lager:info("recive change leader to ~p from ~p",[PLeader,Fact#fact.leader]),
+    ?OUT("Recive change leader from ~p to ~p~n",[Fact#fact.leader,PLeader]),
     case try_commit(NewFact,State) of
         {ok, State2} ->
             %%TODO may be  go to following state direct
-            lager:info("all agree change leader to ~p from ~p",[PLeader,Fact#fact.leader]),
+            ?OUT("Quorum agree change leader from ~p to ~p~n",[Fact#fact.leader,PLeader]),
             step_down(State2);
         {failed, State2} ->
-            lager:info("faile leader to ~p from ~p",[PLeader,Fact#fact.leader]),
+            ?OUT("Failed leader change from ~p to ~p~n",[Fact#fact.leader,PLeader]),
             step_down(State2)
     end;
 leading(Msg, State) ->
@@ -805,7 +805,6 @@ following({commit, Fact, From}, State) ->
             State3 = reset_follower_timer(State2),
             case maybe_set_preferred_leader(Fact, State3) of
                 true ->
-                    lager:info("changin leader to"),
                     abandon(cancel_timer(State3));
                 _ ->
                     {next_state, following, State3}
@@ -2206,7 +2205,7 @@ maybe_set_preferred_leader(NewFact,State=#state{id=Peer})->
                 _->
                     case riak_ensemble_manager:get_leader_pid(State#state.ensemble) of
                         P when is_pid(P)->
-                            lager:info("send change leader to ~p",[Peer]),
+                            ?OUT("Try change leader to me:~p~n",[Peer]),
                             gen_fsm:send_event(P,{change_leader,Peer});
                         _->
                             ok
