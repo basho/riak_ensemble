@@ -352,6 +352,7 @@ probe({quorum_met, Replies}, State=#state{fact=Fact, abandoned=Abandoned}) ->
     Existing = existing_leader(Replies, Abandoned, Latest),
     State2 = State#state{fact=Latest,
                          members=compute_members(Latest#fact.views)},
+    lager:info("Existing leader ~p latest ~p",[Existing,Latest]),
     %% io:format("Latest: ~p~n", [Latest]),
     maybe_follow(Existing, State2);
 probe({timeout, Replies}, State=#state{fact=Fact}) ->
