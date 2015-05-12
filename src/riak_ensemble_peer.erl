@@ -42,7 +42,7 @@
 
 %% Support/debug API
 -export([count_quorum/2, ping_quorum/2, check_quorum/2, force_state/2,
-         get_info/1, stable_views/2, tree_info/1]).
+         get_info/1, stable_views/2, tree_info/1, watch_leader_status/1]).
 
 %% Exported internal callback functions
 -export([do_kupdate/4, do_kput_once/4, do_kmodify/4]).
@@ -135,6 +135,7 @@
                 async         :: pid(),
                 tree          :: pid(),
                 lease         :: riak_ensemble_lease:lease_ref(),
+                watchers = [] :: [pid()],
                 self          :: pid()
                }).
 
@@ -201,6 +202,10 @@ stable_views(Ensemble, Timeout) ->
 -spec get_leader(pid()) -> peer_id().
 get_leader(Pid) when is_pid(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, get_leader, infinity).
+
+-spec watch_leader_status(pid()) -> ok.
+watch_leader_status(Pid) when is_pid(Pid) ->
+    gen_fsm:send_all_state_event(Pid, {watch_leader_status, self()}).
 
 get_info(Pid) when is_pid(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, get_info, infinity).
@@ -599,10 +604,11 @@ prelead(Msg, From, State) ->
     common(Msg, From, State, prelead).
 
 -spec leading(_, state()) -> next_state().
-leading(init, State=#state{id=_Id}) ->
+leading(init, State=#state{id=_Id, watchers=Watchers}) ->
     ?OUT("~p: Leading~n", [_Id]),
     _ = lager:info("~p: Leading~n", [_Id]),
     start_exchange(State),
+    notify_leader_status(Watchers, leading, State),
     leading(tick, State#state{alive=?ALIVE, tree_ready=false});
 leading(tick, State) ->
     leader_tick(State);
@@ -883,8 +889,9 @@ local_commit(Fact=#fact{leader=_Leader, epoch=Epoch, seq=Seq, views=Views},
 step_down(State) ->
     step_down(probe, State).
 
-step_down(Next, State=#state{lease=Lease}) ->
+step_down(Next, State=#state{lease=Lease, watchers=Watchers}) ->
     ?OUT("~p: stepping down~n", [State#state.id]),
+    notify_leader_status(Watchers, Next, State),
     riak_ensemble_lease:unlease(Lease),
     State2 = cancel_timer(State),
     reset_workers(State),
@@ -1832,6 +1839,15 @@ setup({init, Args}, State0=#state{id=Id, ensemble=Ensemble, ets=ETS, mod=Mod}) -
     probe(init, State3).
 
 -spec handle_event(_, atom(), state()) -> {next_state, atom(), state()}.
+handle_event({watch_leader_status, Pid}, StateName, State) when node(Pid) =/= node() ->
+    lager:warning("Remote pid ~p not allowed to watch_leader_status on ensemble peer ~p",
+                  [Pid, State#state.id]),
+    {next_state, StateName, State};
+handle_event({watch_leader_status, Pid}, StateName, State = #state{watchers = Watchers}) ->
+    notify_leader_status(Pid, StateName, State),
+    %% Might as well take this opportunity to prune any dead pids that are in the list
+    NewWatcherList = [P || P <- [Pid | Watchers], is_process_alive(P)],
+    {next_state, StateName, State#state{watchers = NewWatcherList}};
 handle_event({reply, ReqId, Peer, Reply}, StateName, State) ->
     State2 = handle_reply(ReqId, Peer, Reply, State),
     {next_state, StateName, State2};
@@ -2002,6 +2018,13 @@ existing_leader(_Replies, Abandoned, #fact{epoch=Epoch, seq=Seq, leader=Leader})
         false ->
             undefined
     end.
+
+notify_leader_status(PidList, StateName, State) when is_list(PidList) ->
+    [notify_leader_status(P, StateName, State) || P <- PidList];
+notify_leader_status(Pid, leading, State = #state{id = Id, ensemble = Ensemble}) ->
+    Pid ! {is_leading, self(), Id, Ensemble, epoch(State)};
+notify_leader_status(Pid, _, State = #state{id = Id, ensemble = Ensemble}) ->
+    Pid ! {is_not_leading, self(), Id, Ensemble, epoch(State)}.
 
 -spec compute_members([[any()]]) -> [any()].
 compute_members(undefined) ->
