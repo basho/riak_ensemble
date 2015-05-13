@@ -613,7 +613,7 @@ leading(init, State=#state{id=_Id, watchers=Watchers}) ->
     ?OUT("~p: Leading~n", [_Id]),
     _ = lager:info("~p: Leading~n", [_Id]),
     start_exchange(State),
-    notify_leader_status(Watchers, leading, State),
+    _ = notify_leader_status(Watchers, leading, State),
     leading(tick, State#state{alive=?ALIVE, tree_ready=false});
 leading(tick, State) ->
     leader_tick(State);
@@ -896,7 +896,7 @@ step_down(State) ->
 
 step_down(Next, State=#state{lease=Lease, watchers=Watchers}) ->
     ?OUT("~p: stepping down~n", [State#state.id]),
-    notify_leader_status(Watchers, Next, State),
+    _ = notify_leader_status(Watchers, Next, State),
     riak_ensemble_lease:unlease(Lease),
     State2 = cancel_timer(State),
     reset_workers(State),
@@ -1849,7 +1849,7 @@ handle_event({watch_leader_status, Pid}, StateName, State) when node(Pid) =/= no
                   [Pid, State#state.id]),
     {next_state, StateName, State};
 handle_event({watch_leader_status, Pid}, StateName, State = #state{watchers = Watchers}) ->
-    notify_leader_status(Pid, StateName, State),
+    _ = notify_leader_status(Pid, StateName, State),
     %% Might as well take this opportunity to prune any dead pids that are in the list
     NewWatcherList = [P || P <- [Pid | Watchers], is_process_alive(P)],
     {next_state, StateName, State#state{watchers = NewWatcherList}};
