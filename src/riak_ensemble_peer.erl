@@ -42,7 +42,8 @@
 
 %% Support/debug API
 -export([count_quorum/2, ping_quorum/2, check_quorum/2, force_state/2,
-         get_info/1, stable_views/2, tree_info/1, watch_leader_status/1]).
+         get_info/1, stable_views/2, tree_info/1,
+         watch_leader_status/1, stop_watching/1]).
 
 %% Exported internal callback functions
 -export([do_kupdate/4, do_kput_once/4, do_kmodify/4]).
@@ -206,6 +207,10 @@ get_leader(Pid) when is_pid(Pid) ->
 -spec watch_leader_status(pid()) -> ok.
 watch_leader_status(Pid) when is_pid(Pid) ->
     gen_fsm:send_all_state_event(Pid, {watch_leader_status, self()}).
+
+-spec stop_watching(pid()) -> ok.
+stop_watching(Pid) when is_pid(Pid) ->
+    gen_fsm:send_all_state_event(Pid, {stop_watching, self()}).
 
 get_info(Pid) when is_pid(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, get_info, infinity).
@@ -1847,6 +1852,9 @@ handle_event({watch_leader_status, Pid}, StateName, State = #state{watchers = Wa
     notify_leader_status(Pid, StateName, State),
     %% Might as well take this opportunity to prune any dead pids that are in the list
     NewWatcherList = [P || P <- [Pid | Watchers], is_process_alive(P)],
+    {next_state, StateName, State#state{watchers = NewWatcherList}};
+handle_event({stop_watching, Pid}, StateName, State = #state{watchers = Watchers}) ->
+    NewWatcherList = lists:delete(Pid, Watchers),
     {next_state, StateName, State#state{watchers = NewWatcherList}};
 handle_event({reply, ReqId, Peer, Reply}, StateName, State) ->
     State2 = handle_reply(ReqId, Peer, Reply, State),
