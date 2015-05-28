@@ -21,7 +21,6 @@
 
 -export([init_ets/0,
          new/1,
-         reopen/1,
          fetch/3,
          exists/2,
          store/3,
@@ -151,21 +150,6 @@ store(Updates, State=?STATE{id=Id, db=DB}) ->
     %% Intentionally ignore errors (TODO: Should we?)
     _ = eleveldb:write(DB, DBUpdates, []),
     State.
-
-reopen(State=?STATE{db=DB, path=Path}) ->
-    _ = eleveldb:close(DB),
-    ok = filelib:ensure_dir(Path),
-    {ok, NewDB} = safe_open(?RETRIES, Path, leveldb_opts()),
-    State?STATE{db=NewDB}.
-
-safe_open(Retries, Path, Opts) ->
-    case eleveldb:open(Path, Opts) of
-        {ok, DB} ->
-            {ok, DB};
-        _ when (Retries > 0) ->
-            timer:sleep(100),
-            safe_open(Retries-1, Path, Opts)
-    end.
 
 timestamp({Mega, Secs, Micro}) ->
     Mega*1000*1000*1000*1000 + Secs * 1000 * 1000 + Micro.
