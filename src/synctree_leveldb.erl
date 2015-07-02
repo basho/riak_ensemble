@@ -21,7 +21,6 @@
 
 -export([init_ets/0,
          new/1,
-         reopen/1,
          fetch/3,
          exists/2,
          store/3,
@@ -60,32 +59,29 @@ init_ets() ->
 -spec new(_) -> state().
 new(Opts) ->
     Path = get_path(Opts),
-    {ok, DB} = get_leveldb_ref(Path),
+    {ok, DB} = maybe_open_leveldb(Path, ?RETRIES),
     Id = get_tree_id(Opts),
     ?STATE{id=Id, path=Path, db=DB}.
 
-get_leveldb_ref(Path) ->
-    %% Serialize in case multiple same-path trees are created at the same time
-    global:trans({{?MODULE, Path}, self()},
-                 fun() -> maybe_open_leveldb(Path) end).
-
-maybe_open_leveldb(Path) ->
+maybe_open_leveldb(Path, Retries) ->
     %% Check if we have already opened this LevelDB instance, which can
     %% occur when peers are sharing the same on-disk instance.
     case ets:lookup(?MODULE, Path) of
         [{_, DB}] ->
             {ok, DB};
         _ ->
-            ok = filelib:ensure_dir(Path),
-            {ok, DB} = safe_open(?RETRIES, Path, leveldb_opts()),
-            %% TODO: Storing LevelDB refs in ETS prevents DBs from ever
-            %%       closing. If a given node is no longer part of any
-            %%       ensembles that need a given synctree we should close
-            %%       it. For now, users will need to restart a node to
-            %%       close unneeded.
-            true = ets:insert_new(?MODULE, {Path, DB}),
-            {ok, DB}
+	    ok = filelib:ensure_dir(Path),
+	    case eleveldb:open(Path, leveldb_opts()) of
+		{ok, DB} ->
+		    %% If eleveldb:open succeeded, we should have the only ref
+		    true = ets:insert_new(?MODULE, {Path, DB}),
+		    {ok, DB};
+		_ when Retries > 0 ->
+		    timer:sleep(100),
+		    maybe_open_leveldb(Path, Retries - 1)
+	    end
     end.
+
 
 get_path(Opts) ->
     case proplists:get_value(path, Opts) of
@@ -154,21 +150,6 @@ store(Updates, State=?STATE{id=Id, db=DB}) ->
     %% Intentionally ignore errors (TODO: Should we?)
     _ = eleveldb:write(DB, DBUpdates, []),
     State.
-
-reopen(State=?STATE{db=DB, path=Path}) ->
-    _ = eleveldb:close(DB),
-    ok = filelib:ensure_dir(Path),
-    {ok, NewDB} = safe_open(?RETRIES, Path, leveldb_opts()),
-    State?STATE{db=NewDB}.
-
-safe_open(Retries, Path, Opts) ->
-    case eleveldb:open(Path, Opts) of
-        {ok, DB} ->
-            {ok, DB};
-        _ when (Retries > 0) ->
-            timer:sleep(100),
-            safe_open(Retries-1, Path, Opts)
-    end.
 
 timestamp({Mega, Secs, Micro}) ->
     Mega*1000*1000*1000*1000 + Secs * 1000 * 1000 + Micro.
