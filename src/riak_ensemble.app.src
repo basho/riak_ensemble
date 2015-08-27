@@ -5,7 +5,9 @@
   {registered, []},
   {applications, [
                   kernel,
-                  stdlib
+                  stdlib,
+                  eleveldb,
+                  lager
                  ]},
   {mod, { riak_ensemble_app, []}},
   {env, []}
