@@ -16,11 +16,17 @@ scenario() ->
     CurrentCount = callback_count(),
     riak_ensemble_manager:enable(),
     wait_until_callback_fires(CurrentCount),
+    State = latest_state(),
+    ?assert(riak_ensemble_state:enabled(State)),
     ok.
 
 init_tables() ->
     ets:new(?TAB, [named_table, public, set]),
     ets:insert(?TAB, {callback_count, 0}).
+
+latest_state() ->
+    [{latest_state, State}] = ets:lookup(?TAB, latest_state),
+    State.
 
 callback_count() ->
     [{callback_count, Count}] = ets:lookup(?TAB, callback_count),
