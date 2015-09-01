@@ -13,6 +13,7 @@ run_test_() ->
 scenario() ->
     init_tables(),
     ?assertEqual(ok, riak_ensemble_manager:subscribe(fun callback/1)),
+    ?assertEqual(ok, riak_ensemble_manager:subscribe(fun evil_callback/1)),
     CurrentCount = callback_count(),
     riak_ensemble_manager:enable(),
     wait_until_callback_fires(CurrentCount),
@@ -35,6 +36,9 @@ callback_count() ->
 callback(CS) ->
     ets:insert(?TAB, {latest_state, CS}),
     ets:update_counter(?TAB, callback_count, 1).
+
+evil_callback(_CS) ->
+    throw(revenge_of_the_evil_callback).
 
 wait_until_callback_fires(PrevCount) ->
     wait_until_callback_fires(PrevCount, 3000).
