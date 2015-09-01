@@ -13,3 +13,4 @@ lease_test
 ensemble_tests_pure
 replace_members_test
 read_tombstone_test
+subscription_test
