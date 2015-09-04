@@ -24,6 +24,9 @@
 %% API
 -export([start_link/0, start_link/1]).
 
+-export([engage/0,
+         disengage/0]).
+
 %% Supervisor callbacks
 -export([init/1]).
 
@@ -41,6 +44,37 @@ start_link(Path) ->
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
+engage() ->
+    lists:foreach(fun ensure_child/1, children()).
+
+disengage() ->
+    lists:foreach(fun(Id) -> supervisor:terminate_child(?MODULE, Id) end,
+                  children_ids()).
+
+%% Must protect against multiple calls to engange/0
+ensure_child({Id, _, _, _, _, _}=ChildSpec) ->
+    case supervisor:start_child(?MODULE, ChildSpec) of
+        {ok, _} ->
+            ok;
+        {ok, _, _} ->
+            ok;
+        {error, {already_started, _}} ->
+            ok;
+        {error, already_present} ->
+            case supervisor:restart_child(?MODULE, Id) of
+                {ok, _} ->
+                    ok;
+                {ok, _, _} ->
+                    ok;
+                {error, Okay} when Okay==running orelse Okay==restarting ->
+                    ok;
+                {error, Error} ->
+                    exit({riak_ensemble_ensure_child_restart, Error})
+            end;
+        {error, Error} ->
+            exit({riak_ensemble_ensure_child, Error})
+    end.
+
 %% ===================================================================
 %% Supervisor callbacks
 %% ===================================================================
@@ -48,8 +82,16 @@ start_link() ->
 init([]) ->
     riak_ensemble_test:setup(),
     synctree_leveldb:init_ets(),
-    Children = [?CHILD(riak_ensemble_router_sup, supervisor),
-                ?CHILD(riak_ensemble_storage, worker),
-                ?CHILD(riak_ensemble_peer_sup, supervisor),
-                ?CHILD(riak_ensemble_manager, worker)],
+    Children = [],
     {ok, {{rest_for_one, 5, 10}, Children}}.
+
+%% @doc to be started when asked to do so from riak_ensemble_manager.
+children() ->
+    [?CHILD(riak_ensemble_router_sup, supervisor),
+     ?CHILD(riak_ensemble_storage, worker),
+     ?CHILD(riak_ensemble_peer_sup, supervisor),
+     ?CHILD(riak_ensemble_manager, worker)].
+
+children_ids() ->
+    [ Id
+      || {Id,_,_,_,_,_} <- children()].

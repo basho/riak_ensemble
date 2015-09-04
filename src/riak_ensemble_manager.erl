@@ -40,6 +40,8 @@
          gossip_pending/3,
          join/2,
          remove/2,
+         start_ensemble/0,
+         stop_ensemble/0,
          enabled/0,
          enable/0,
          subscribe/1,
@@ -99,6 +101,12 @@ remove(Same, Same) ->
     {error, same_node};
 remove(Node, NodeToRemove) ->
     typed_call(Node, {remove, NodeToRemove}, infinity).
+
+start_ensemble() ->
+    riak_ensemble_sup:engage().
+
+stop_ensemble() ->
+    riak_ensemble_sup:disengage().
 
 -spec enabled() -> boolean().
 enabled() ->
