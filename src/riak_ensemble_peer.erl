@@ -29,7 +29,7 @@
 -export([start_link/4, start/4]).
 -export([join/2, join/3, update_members/3, get_leader/1, backend_pong/1]).
 -export([kget/4, kget/5, kupdate/6, kput_once/5, kover/5, kmodify/6, kdelete/4,
-         ksafe_delete/5, obj_value/2, obj_value/3, kmodify_extended/6]).
+         ksafe_delete/5, obj_value/2, obj_value/3]).
 -export([setup/2]).
 -export([probe/2, election/2, prepare/2, leading/2, following/2,
          probe/3, election/3, prepare/3, leading/3, following/3]).
@@ -44,7 +44,7 @@
          get_info/1, stable_views/2, tree_info/1]).
 
 %% Exported internal callback functions
--export([do_kupdate/4, do_kput_once/4, do_kmodify/4, do_kmodify_extended/4]).
+-export([do_kupdate/4, do_kput_once/4, do_kmodify/4]).
 
 -compile({pulse_replace_module,
           [{gen_fsm, pulse_gen_fsm}]}).
@@ -279,27 +279,6 @@ kmodify(Node, Target, Key, ModFun, Default, Timeout) ->
     Result.
 
 do_kmodify(Obj, NextSeq, State, [ModFun, Default]) ->
-    Value = get_value(Obj, Default, State),
-    Vsn = {epoch(State), NextSeq},
-    New = case ModFun of
-              {Mod, Fun, Args} ->
-                  Mod:Fun(Vsn, Value, Args);
-              _ ->
-                  ModFun(Vsn, Value)
-          end,
-    case New of
-        failed ->
-            failed;
-        _ ->
-            {ok, set_obj(value, New, Obj, State)}
-    end.
-kmodify_extended(Node, Target, Key, ModFun, Default, Timeout) ->
-    F = fun ?MODULE:do_kmodify_extended/4,
-    Result = riak_ensemble_router:sync_send_event(Node, Target, {put, Key, F, [ModFun, Default]}, Timeout),
-    ?OUT("kmodify(~p): ~p~n", [Key, Result]),
-    Result.
-
-do_kmodify_extended(Obj, NextSeq, State, [ModFun, Default]) ->
     Value = get_value(Obj, Default, State),
     Vsn = {epoch(State), NextSeq},
     New = case ModFun of
@@ -1394,28 +1373,8 @@ do_put_fsm(Key, Fun, Args, From, Self, KnownHash, State) ->
             end
     end.
 
-do_modify_fsm(Key = {{<<"cp">>, <<"bucket">>}, _}, Current, Fun, Args, From, State=#state{self=Self}) ->
-    io:format("New Code path (3)~n"),
-    case modify_key(Key, Current, Fun, Args, State) of
-        {ok, New, _State2} ->
-            send_reply(From, {ok, New});
-        {reply, Message, _State2} ->
-            io:format("New Code path (3!!)~n"),
-            send_reply(From, {reply, Message});
-        {failed, Message, _State2} ->
-            send_reply(From, {failed, Message});
-        {corrupted, _State2} ->
-            send_reply(From, failed),
-            gen_fsm:sync_send_event(Self, tree_corrupted, infinity);
-        {precondition, _State2} ->
-            send_reply(From, failed);
-        {failed, _State2} ->
-            gen_fsm:sync_send_event(Self, request_failed, infinity),
-            send_reply(From, timeout)
-    end;
 %% -spec do_modify_fsm(_,_,fun((_,_) -> any()),{_,_},state()) -> ok.
 do_modify_fsm(Key, Current, Fun, Args, From, State=#state{self=Self}) ->
-    %io:format("running modify FSM: ~p~n", [modify_key(Key, Current, Fun, Args, State)]),
     case modify_key(Key, Current, Fun, Args, State) of
         {ok, New, _State2} ->
             send_reply(From, {ok, New});
@@ -1608,7 +1567,6 @@ modify_key(Key, Current, Fun, Args, State) ->
                 end,
     case FunResult of
         {ok, New} ->
-            io:format("Doing put of new obj: ~p~n", [New]),
             case put_obj(Key, New, Seq, State) of
                 {ok, Result, State2} ->
                     {ok, Result, State2};
@@ -1620,7 +1578,6 @@ modify_key(Key, Current, Fun, Args, State) ->
         failed ->
             {precondition, State};
         {reply, Message, New} ->
-            io:format("Doing put of new obj (2): ~p~n", [New]),
             case put_obj(Key, New, Seq, State) of
                 {ok, _Result, State2} ->
                     {reply, Message, State2};

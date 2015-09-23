@@ -6,7 +6,6 @@
 -type peer_change() :: term(). %% FIXME
 -type change_error() :: already_member | not_member.
 -type std_reply() :: timeout | failed | unavailable | nack | {ok, term()}.
--type extended_reply() :: std_reply() | {error, term()}.
 -type maybe_pid() :: pid() | undefined.
 -type peer_pids() :: [{peer_id(), maybe_pid()}].
 -type peer_reply() :: {peer_id(), term()}.
