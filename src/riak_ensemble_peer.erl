@@ -290,10 +290,10 @@ do_kmodify(Obj, NextSeq, State, [ModFun, Default]) ->
     case New of
         failed ->
             failed;
-        {failed, _} ->
-            New;
         {reply, Reply, NewValue} ->
             {reply, Reply, set_obj(value, NewValue, Obj, State)};
+        {reply_noreplicate, Reply} ->
+            {reply_noreplicate, Reply};
         _ ->
             {ok, set_obj(value, New, Obj, State)}
     end.
@@ -1333,8 +1333,7 @@ send_reply(From, Reply) ->
         unavailable -> ok;
         nack -> ok;
         {ok,_} -> ok;
-        {reply, _} -> ok;
-        {failed, _} -> ok
+        {reply, _} -> ok
     end,
     gen_fsm:reply(From, Reply),
     ok.
@@ -1380,8 +1379,6 @@ do_modify_fsm(Key, Current, Fun, Args, From, State=#state{self=Self}) ->
             send_reply(From, {ok, New});
         {reply, Message, _State2} ->
             send_reply(From, {reply, Message});
-        {failed, Message, _State2} ->
-            send_reply(From, {failed, Message});
         {corrupted, _State2} ->
             send_reply(From, failed),
             gen_fsm:sync_send_event(Self, tree_corrupted, infinity);
@@ -1586,8 +1583,9 @@ modify_key(Key, Current, Fun, Args, State) ->
                 {failed, State2} ->
                     {failed, State2}
             end;
-        {failed, Message} ->
-            {failed, Message, State}
+        {reply_noreplicate, Message} ->
+            {reply, Message, State}
+
     end.
 
 -spec get_latest_obj(_,_,_,state()) -> {ok, obj(), _, state()} | {failed, state()}.
