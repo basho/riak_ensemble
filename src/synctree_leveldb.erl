@@ -87,7 +87,7 @@ get_path(Opts) ->
     case proplists:get_value(path, Opts) of
         undefined ->
             Base = "/tmp/ST",
-            Name = integer_to_list(timestamp(erlang:now())),
+            Name = integer_to_list(timestamp(erlang:timestamp())),
             filename:join(Base, Name);
         Path ->
             Path
