@@ -87,7 +87,7 @@ get_path(Opts) ->
     case proplists:get_value(path, Opts) of
         undefined ->
             Base = "/tmp/ST",
-            Name = integer_to_list(timestamp(erlang:now())),
+            Name = integer_to_list(time_compat:unique_integer([positive])),
             filename:join(Base, Name);
         Path ->
             Path
@@ -150,9 +150,6 @@ store(Updates, State=?STATE{id=Id, db=DB}) ->
     %% Intentionally ignore errors (TODO: Should we?)
     _ = eleveldb:write(DB, DBUpdates, []),
     State.
-
-timestamp({Mega, Secs, Micro}) ->
-    Mega*1000*1000*1000*1000 + Secs * 1000 * 1000 + Micro.
 
 leveldb_opts() ->
     [{is_internal_db, true},
