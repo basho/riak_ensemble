@@ -18,25 +18,11 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_ensemble_clock).
--on_load(init/0).
+
 -export([monotonic_time/0, monotonic_time_ms/0]).
 
 monotonic_time() ->
-    erlang:nif_error({error, not_loaded}).
+    erlang:monotonic_time().
 
 monotonic_time_ms() ->
-    erlang:nif_error({error, not_loaded}).
-
-init() ->
-    case code:priv_dir(riak_ensemble) of
-        {error, bad_name} ->
-            case code:which(?MODULE) of
-                Filename when is_list(Filename) ->
-                    SoName = filename:join([filename:dirname(Filename),"../priv", "riak_ensemble"]);
-                _ ->
-                    SoName = filename:join("../priv", "riak_ensemble")
-            end;
-        Dir ->
-            SoName = filename:join(Dir, "riak_ensemble")
-    end,
-    erlang:load_nif(SoName, 0).
+    erlang:monotonic_time(milli_seconds).

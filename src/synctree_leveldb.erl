@@ -70,16 +70,16 @@ maybe_open_leveldb(Path, Retries) ->
         [{_, DB}] ->
             {ok, DB};
         _ ->
-	    ok = filelib:ensure_dir(Path),
-	    case eleveldb:open(Path, leveldb_opts()) of
-		{ok, DB} ->
-		    %% If eleveldb:open succeeded, we should have the only ref
-		    true = ets:insert_new(?MODULE, {Path, DB}),
-		    {ok, DB};
-		_ when Retries > 0 ->
-		    timer:sleep(100),
-		    maybe_open_leveldb(Path, Retries - 1)
-	    end
+        ok = filelib:ensure_dir(Path),
+        case eleveldb:open(Path, leveldb_opts()) of
+        {ok, DB} ->
+            %% If eleveldb:open succeeded, we should have the only ref
+            true = ets:insert_new(?MODULE, {Path, DB}),
+            {ok, DB};
+        _ when Retries > 0 ->
+            timer:sleep(100),
+            maybe_open_leveldb(Path, Retries - 1)
+        end
     end.
 
 
@@ -87,7 +87,7 @@ get_path(Opts) ->
     case proplists:get_value(path, Opts) of
         undefined ->
             Base = "/tmp/ST",
-            Name = integer_to_list(timestamp(erlang:now())),
+            Name = integer_to_list(erlang:system_time(micro_seconds)),
             filename:join(Base, Name);
         Path ->
             Path
@@ -151,12 +151,8 @@ store(Updates, State=?STATE{id=Id, db=DB}) ->
     _ = eleveldb:write(DB, DBUpdates, []),
     State.
 
-timestamp({Mega, Secs, Micro}) ->
-    Mega*1000*1000*1000*1000 + Secs * 1000 * 1000 + Micro.
-
 leveldb_opts() ->
     [{is_internal_db, true},
      {write_buffer_size, 4 * 1024 * 1024},
      {use_bloomfilter, true},
      {create_if_missing, true}].
-

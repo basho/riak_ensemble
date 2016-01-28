@@ -1,6 +1,6 @@
 {application, riak_ensemble,
  [
-  {description, ""},
+  {description, "Multi-Paxos framework in Erlang"},
   {vsn, git},
   {registered, []},
   {applications, [
@@ -8,5 +8,8 @@
                   stdlib
                  ]},
   {mod, { riak_ensemble_app, []}},
-  {env, []}
+  {env, []},
+
+ {licenses, ["Apache 2.0"]},
+ {links, [{"Github","https://github.com/basho/riak_ensemble"}]}
  ]}.
