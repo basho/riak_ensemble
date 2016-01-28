@@ -22,7 +22,7 @@
 -export([monotonic_time/0, monotonic_time_ms/0]).
 
 monotonic_time() ->
-    erlang:monotonic_time().
+    {ok, erlang:monotonic_time()}.
 
 monotonic_time_ms() ->
-    erlang:monotonic_time(milli_seconds).
+    {ok, erlang:monotonic_time(milli_seconds)}.
