@@ -42,7 +42,6 @@
          remove/2,
          enabled/0,
          enable/0,
-         subscribe/1,
          create_ensemble/4,
          create_ensemble/5,
          known_ensembles/0,
@@ -64,8 +63,7 @@
 -record(state, {version       :: integer(),
                 ensemble_data :: ensembles(),
                 remote_peers  :: orddict(peer_id(), pid()),
-                cluster_state :: cluster_state(),
-                subscribers :: [fun()]
+                cluster_state :: cluster_state()
                }).
 
 -type state() :: #state{}.
@@ -129,10 +127,6 @@ get_peer_info(Ensemble, Peer={_, Node}) ->
         exit:{{nodedown, _},_} ->
             nodedown
     end.
-
-subscribe(Callback)->
-    gen_server:call(?MODULE, {subscribe, Callback}, infinity).
-
 
 %%%===================================================================
 %%% Gossip/State API
@@ -293,7 +287,7 @@ typed_cast(Node, Msg) when is_atom(Node) ->
 -spec init([]) -> {ok, state()}.
 init([]) ->
     _ = ets:new(?ETS, [named_table, public, {read_concurrency, true}, {write_concurrency, true}]),
-    State = load_subscribers(reload_state()),
+    State = reload_state(),
     schedule_tick(),
     true = ets:insert(?ETS, {cluster_state, State#state.cluster_state}),
     gen_server:cast(self(), init),
@@ -374,13 +368,6 @@ handle_call({peer_info, Ensemble, Peer}, From, State) ->
                        end),
             {noreply, State}
     end;
-
-handle_call({subscribe, Callback}, _, State=#state{subscribers=Subscribers}) ->
-    %% TODO: Change subscriber API to prevent multiple subscriptions with the same callback.
-    Subscribers2 = [Callback|Subscribers],
-    application:set_env(riak_ensemble, subscribers, Subscribers2),
-    State2 = State#state{subscribers=Subscribers2},
-    {reply, ok, State2};
 
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
@@ -544,14 +531,6 @@ join_allowed(LocalCS, RemoteCS) ->
             true
     end.
 
-load_subscribers(State) ->
-    case application:get_env(riak_ensemble, subscribers) of
-        undefined->
-            State#state{subscribers=[]};
-        {ok, Subscribers} ->
-            State#state{subscribers=Subscribers}
-    end.
-
 -spec load_saved_state() -> not_found | {ok, state()}.
 load_saved_state() ->
     try
@@ -629,7 +608,7 @@ compute_all_members(Ensemble, Pending, Views) ->
     end.
 
 -spec state_changed(state()) -> state().
-state_changed(State=#state{ensemble_data=EnsData, cluster_state=CS, subscribers=Subscribers}) ->
+state_changed(State=#state{ensemble_data=EnsData, cluster_state=CS}) ->
     true = ets:insert(?ETS, {cluster_state, CS}),
     true = ets:insert(?ETS, {cluster, riak_ensemble_state:members(CS)}),
     true = ets:insert(?ETS, {enabled, riak_ensemble_state:enabled(CS)}),
@@ -659,7 +638,6 @@ state_changed(State=#state{ensemble_data=EnsData, cluster_state=CS, subscribers=
                  %% io:format("Should stop: ~p~n", [{Ensemble, Id}]),
                  ok = riak_ensemble_peer_sup:stop_peer(Ensemble, Id)
          end || Change <- PeerChanges],
-    _ = [Callback(CS) || Callback <- Subscribers],
     State#state{ensemble_data=NewEnsData}.
 
 -spec request_remote_peers(state()) -> ok.
