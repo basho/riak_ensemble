@@ -659,16 +659,8 @@ state_changed(State=#state{ensemble_data=EnsData, cluster_state=CS, subscribers=
                  %% io:format("Should stop: ~p~n", [{Ensemble, Id}]),
                  ok = riak_ensemble_peer_sup:stop_peer(Ensemble, Id)
          end || Change <- PeerChanges],
-    _ = [run_subscriber_callback(Callback, CS) || Callback <- Subscribers],
+    _ = [Callback(CS) || Callback <- Subscribers],
     State#state{ensemble_data=NewEnsData}.
-
-run_subscriber_callback(Callback, CS) ->
-    try Callback(CS)
-    catch
-        Exception ->
-            lager:warning("Callback ~p crashed! Exception: ~p ClusterState: ~p",
-                          [Callback, Exception, CS])
-    end.
 
 -spec request_remote_peers(state()) -> ok.
 request_remote_peers(State=#state{remote_peers=Remote}) ->
