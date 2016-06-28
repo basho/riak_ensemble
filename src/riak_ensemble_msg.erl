@@ -40,7 +40,7 @@
 
 %%%===================================================================
 
--type required()   :: quorum | other | all.
+-type required()   :: quorum | other | all | all_or_quorum.
 
 -record(msgstate, {awaiting = undefined :: 'undefined' | reqid(),
                    timer    = undefined :: 'undefined' | reference(),
@@ -265,6 +265,11 @@ check_enough(Collect=#collect{id=Id,
                               required=Required,
                               extra=Extra}) ->
     case quorum_met(Replies, Id, Views, Required, Extra) of
+        true when Required =:= all_or_quorum ->
+            %% If we've hit a quorum with all_or_quorum required, then
+            %% we need to wait some additional length of time and see
+            %% if we get replies from all.
+            try_collect_all(Collect);
         true ->
             From ! {Ref, ok, Replies},
             ok;
@@ -272,6 +277,43 @@ check_enough(Collect=#collect{id=Id,
             collect_timeout(Replies, Parent);
         false ->
             collect_replies(Collect)
+    end.
+
+-spec try_collect_all(#collect{}) -> _.
+try_collect_all(Collect=#collect{reqid=ReqId}) ->
+    Timeout = riak_ensemble_config:notfound_read_delay(),
+    erlang:send_after(Timeout, self(), {try_collect_all_timeout, ReqId}),
+    try_collect_all_impl(Collect).
+
+try_collect_all_impl(Collect=#collect{id=Id,
+                                      replies=Replies0,
+                                      parent={From, Ref},
+                                      reqid=ReqId,
+                                      views=Views}) ->
+    receive
+        {'$gen_all_state_event', Event} ->
+            {reply, ReqId, Peer, Reply} = Event,
+            Replies = [{Peer, Reply}|Replies0],
+            case quorum_met(Replies, Id, Views, all) of
+                true ->
+                    %% At this point we should be guaranteed to have already
+                    %% gotten a parent that we can reply to:
+                    ?OUT("Met quorum with Event ~p Replies ~p", [Event, Replies, Views]),
+                    From ! {Ref, ok, Replies};
+                false ->
+                    ?OUT("Got additional message ~p but quorum still not met", [Event]),
+                    try_collect_all(Collect#collect{replies=Replies});
+                nack ->
+                    %% Since we're waiting for all, we may see a nack from even
+                    %% just a single negative response. But, we already know we
+                    %% have a quorum of positive replies, so we can still send
+                    %% back an 'ok' response with the replies we've gotten.
+                    ?OUT("Got a nack! Returning replies so far: ~p", [Replies]),
+                    From ! {Ref, ok, Replies}
+            end;
+        {try_collect_all_timeout, ReqId} ->
+            ?OUT("Timed out waiting for try_collect_all", []),
+            From ! {Ref, ok, Replies0}
     end.
 
 -spec wait_for_quorum(future()) -> {quorum_met, [peer_reply()]} |
@@ -347,6 +389,8 @@ quorum_met(Replies, Id, [Members|Views], Required, Extra) ->
     {Valid, Nacks} = find_valid(Filtered),
     Quorum = case Required of
                  quorum ->
+                     length(Members) div 2 + 1;
+                 all_or_quorum ->
                      length(Members) div 2 + 1;
                  other ->
                      length(Members) div 2 + 1;

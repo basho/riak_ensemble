@@ -30,6 +30,7 @@
 -export([join/2, join/3, update_members/3, get_leader/1, backend_pong/1]).
 -export([kget/4, kget/5, kupdate/6, kput_once/5, kover/5, kmodify/6, kdelete/4,
          ksafe_delete/5, obj_value/2, obj_value/3]).
+-export([debug_local_get/2]).
 -export([setup/2]).
 -export([probe/2, election/2, prepare/2, leading/2, following/2,
          probe/3, election/3, prepare/3, leading/3, following/3]).
@@ -41,7 +42,8 @@
 
 %% Support/debug API
 -export([count_quorum/2, ping_quorum/2, check_quorum/2, force_state/2,
-         get_info/1, stable_views/2, tree_info/1]).
+         get_info/1, stable_views/2, tree_info/1,
+         watch_leader_status/1, stop_watching/1]).
 
 %% Exported internal callback functions
 -export([do_kupdate/4, do_kput_once/4, do_kmodify/4]).
@@ -134,6 +136,7 @@
                 async         :: pid(),
                 tree          :: pid(),
                 lease         :: riak_ensemble_lease:lease_ref(),
+                watchers = [] :: [pid()],
                 self          :: pid()
                }).
 
@@ -200,6 +203,14 @@ stable_views(Ensemble, Timeout) ->
 -spec get_leader(pid()) -> peer_id().
 get_leader(Pid) when is_pid(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, get_leader, infinity).
+
+-spec watch_leader_status(pid()) -> ok.
+watch_leader_status(Pid) when is_pid(Pid) ->
+    gen_fsm:send_all_state_event(Pid, {watch_leader_status, self()}).
+
+-spec stop_watching(pid()) -> ok.
+stop_watching(Pid) when is_pid(Pid) ->
+    gen_fsm:send_all_state_event(Pid, {stop_watching, self()}).
 
 get_info(Pid) when is_pid(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, get_info, infinity).
@@ -321,6 +332,13 @@ local_get(Pid, Key, Timeout) when is_pid(Pid) ->
 -spec local_put(pid(), term(), term(), timeout()) -> fixme().
 local_put(Pid, Key, Obj, Timeout) when is_pid(Pid) ->
     riak_ensemble_router:sync_send_event(Pid, {local_put, Key, Obj}, Timeout).
+
+%% Acts like local_get, but can be used for any peer, not just the leader.
+%% Should only be used for testing purposes, since values obtained via
+%% this function provide no consistency guarantees whatsoever.
+-spec debug_local_get(pid(), term()) -> std_reply().
+debug_local_get(Pid, Key) ->
+    gen_fsm:sync_send_all_state_event(Pid, {debug_local_get, Key}).
 
 %%%===================================================================
 %%% Core Protocol
@@ -591,10 +609,11 @@ prelead(Msg, From, State) ->
     common(Msg, From, State, prelead).
 
 -spec leading(_, state()) -> next_state().
-leading(init, State=#state{id=_Id}) ->
+leading(init, State=#state{id=_Id, watchers=Watchers}) ->
     ?OUT("~p: Leading~n", [_Id]),
     _ = lager:info("~p: Leading~n", [_Id]),
     start_exchange(State),
+    _ = notify_leader_status(Watchers, leading, State),
     leading(tick, State#state{alive=?ALIVE, tree_ready=false});
 leading(tick, State) ->
     leader_tick(State);
@@ -875,8 +894,9 @@ local_commit(Fact=#fact{leader=_Leader, epoch=Epoch, seq=Seq, views=Views},
 step_down(State) ->
     step_down(probe, State).
 
-step_down(Next, State=#state{lease=Lease}) ->
+step_down(Next, State=#state{lease=Lease, watchers=Watchers}) ->
     ?OUT("~p: stepping down~n", [State#state.id]),
+    _ = notify_leader_status(Watchers, Next, State),
     riak_ensemble_lease:unlease(Lease),
     State2 = cancel_timer(State),
     reset_workers(State),
@@ -1528,7 +1548,25 @@ is_current(Obj, Key, KnownHash, State) ->
 
 -spec update_key(_,_,_,state()) -> {ok, obj(), state()} | {failed,state()} | {corrupted,state()}.
 update_key(Key, Local, KnownHash, State) ->
+    NumPeers = length(get_peers(State#state.members, State)),
     case get_latest_obj(Key, Local, KnownHash, State) of
+        {ok, Latest, Replies, State2} when
+              Latest =:= notfound andalso
+              (length(Replies) + 1) =:= NumPeers ->
+            %% If we get a reply back from every other node and find that
+            %% nobody has a copy, we can safely skip writing a tombstone.
+            %% (The + 1 in the guard above is due to the fact that we don't
+            %% expect a reply from ourselves, since if we get here then we
+            %% already did a local get directly and got notfound.)
+            ?OUT("Got back notfound from every peer! Skipping tombstone for key ~p", [Key]),
+
+            %% The client expects an object, but in this case we don't have
+            %% one, so create a "fake" notfound object to pass back.
+            Seq = obj_sequence(State2),
+            Epoch = epoch(State2),
+            New = new_obj(Epoch, Seq, Key, notfound, State2),
+
+            {ok, New, State2};
         {ok, Latest, _Replies, State2} ->
             case put_obj(Key, Latest, State2) of
                 {ok, New, State3} ->
@@ -1590,7 +1628,11 @@ get_latest_obj(Key, Local, KnownHash, State=#state{id=Id, members=Members}) ->
                  false ->
                      Check
              end,
-    {Future, State2} = blocking_send_all({get, Key, Id, Epoch}, Peers, quorum, Check2, State),
+    Required = case KnownHash of
+                   notfound -> all_or_quorum;
+                   _ ->        quorum
+               end,
+    {Future, State2} = blocking_send_all({get, Key, Id, Epoch}, Peers, Required, Check2, State),
     case wait_for_quorum(Future) of
         {quorum_met, Replies} ->
             Latest = latest_obj(Replies, Local, State),
@@ -1802,6 +1844,18 @@ setup({init, Args}, State0=#state{id=Id, ensemble=Ensemble, ets=ETS, mod=Mod}) -
     probe(init, State3).
 
 -spec handle_event(_, atom(), state()) -> {next_state, atom(), state()}.
+handle_event({watch_leader_status, Pid}, StateName, State) when node(Pid) =/= node() ->
+    lager:warning("Remote pid ~p not allowed to watch_leader_status on ensemble peer ~p",
+                  [Pid, State#state.id]),
+    {next_state, StateName, State};
+handle_event({watch_leader_status, Pid}, StateName, State = #state{watchers = Watchers}) ->
+    _ = notify_leader_status(Pid, StateName, State),
+    %% Might as well take this opportunity to prune any dead pids that are in the list
+    NewWatcherList = [P || P <- [Pid | Watchers], is_process_alive(P)],
+    {next_state, StateName, State#state{watchers = NewWatcherList}};
+handle_event({stop_watching, Pid}, StateName, State = #state{watchers = Watchers}) ->
+    NewWatcherList = lists:delete(Pid, Watchers),
+    {next_state, StateName, State#state{watchers = NewWatcherList}};
 handle_event({reply, ReqId, Peer, Reply}, StateName, State) ->
     State2 = handle_reply(ReqId, Peer, Reply, State),
     {next_state, StateName, State2};
@@ -1827,6 +1881,9 @@ handle_sync_event(tree_info, _From, StateName, State=#state{tree_trust=Trust,
     TopHash = riak_ensemble_peer_tree:top_hash(Pid),
     Info = {Trust, Ready, TopHash},
     {reply, Info, StateName, State};
+handle_sync_event({debug_local_get, Key}, From, StateName, State) ->
+    State2 = do_local_get(From, Key, State),
+    {next_state, StateName, State2};
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.
@@ -1969,6 +2026,13 @@ existing_leader(_Replies, Abandoned, #fact{epoch=Epoch, seq=Seq, leader=Leader})
         false ->
             undefined
     end.
+
+notify_leader_status(PidList, StateName, State) when is_list(PidList) ->
+    [notify_leader_status(P, StateName, State) || P <- PidList];
+notify_leader_status(Pid, leading, State = #state{id = Id, ensemble = Ensemble}) ->
+    Pid ! {is_leading, self(), Id, Ensemble, epoch(State)};
+notify_leader_status(Pid, _, State = #state{id = Id, ensemble = Ensemble}) ->
+    Pid ! {is_not_leading, self(), Id, Ensemble, epoch(State)}.
 
 -spec compute_members([[any()]]) -> [any()].
 compute_members(undefined) ->

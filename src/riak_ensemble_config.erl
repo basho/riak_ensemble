@@ -113,6 +113,19 @@ tree_validation() ->
 synchronous_tree_updates() ->
     get_env(synchronous_tree_updates, false).
 
+%% @doc
+%% Determines how long to wait for additional responses to come in on
+%% certain reads that may return notfound. If we receive responses from
+%% every peer in the ensemble, we do not need to write a tombstone for
+%% the notfound key. If set to zero, no additional time will be waited,
+%% but it is still possible we may be able to skip writing the tombstone
+%% if all the responses arrive within a very close window of time.
+%% The default of 1ms should be enough to avoid most tombstones that
+%% would otherwise be created, but a higher value may be specified in
+%% cases where unpredictable latencies necessitate it.
+notfound_read_delay() ->
+    get_env(notfound_read_delay, 1).
+
 get_env(Key, Default) ->
     case application:get_env(riak_ensemble, Key) of
         undefined ->
