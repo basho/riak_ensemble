@@ -1862,9 +1862,15 @@ handle_event({watch_leader_status, Pid}, StateName, State) when node(Pid) =/= no
                   [Pid, State#state.id]),
     {next_state, StateName, State};
 handle_event({watch_leader_status, Pid}, StateName, State = #state{watchers = Watchers}) ->
-    _ = notify_leader_status(Pid, StateName, State),
-    MRef = erlang:monitor(process, Pid),
-    {next_state, StateName, State#state{watchers = [{Pid, MRef} | Watchers]}};
+    case is_watcher(Pid, Watchers) of
+        true ->
+            lager:debug("Got watch_leader_status for ~p, but pid already in watchers list"),
+            {next_state, StateName, State};
+        false ->
+            _ = notify_leader_status(Pid, StateName, State),
+            MRef = erlang:monitor(process, Pid),
+            {next_state, StateName, State#state{watchers = [{Pid, MRef} | Watchers]}}
+    end;
 handle_event({stop_watching, Pid}, StateName, State = #state{watchers = Watchers}) ->
     case remove_watcher(Pid, Watchers) of
         not_found ->
@@ -2082,6 +2088,14 @@ peer(Id, #state{id=Id}) ->
     self();
 peer(Id, #state{ensemble=Ensemble}) ->
     riak_ensemble_manager:get_peer_pid(Ensemble, Id).
+
+is_watcher(Pid, WatcherList) ->
+    case lists:keyfind(Pid, 1, WatcherList) of
+        false ->
+            false;
+        _ ->
+            true
+    end.
 
 remove_watcher(Pid, WatcherList) ->
     case lists:keytake(Pid, 1, WatcherList) of
