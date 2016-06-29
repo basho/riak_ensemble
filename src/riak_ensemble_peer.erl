@@ -1858,8 +1858,8 @@ setup({init, Args}, State0=#state{id=Id, ensemble=Ensemble, ets=ETS, mod=Mod}) -
 
 -spec handle_event(_, atom(), state()) -> {next_state, atom(), state()}.
 handle_event({watch_leader_status, Pid}, StateName, State) when node(Pid) =/= node() ->
-    lager:warning("Remote pid ~p not allowed to watch_leader_status on ensemble peer ~p",
-                  [Pid, State#state.id]),
+    lager:debug("Remote pid ~p not allowed to watch_leader_status on ensemble peer ~p",
+                [Pid, State#state.id]),
     {next_state, StateName, State};
 handle_event({watch_leader_status, Pid}, StateName, State = #state{watchers = Watchers}) ->
     case is_watcher(Pid, Watchers) of
@@ -1874,7 +1874,7 @@ handle_event({watch_leader_status, Pid}, StateName, State = #state{watchers = Wa
 handle_event({stop_watching, Pid}, StateName, State = #state{watchers = Watchers}) ->
     case remove_watcher(Pid, Watchers) of
         not_found ->
-            lager:warning("Tried to stop watching for pid ~p, but did not find it in watcher list"),
+            lager:debug("Tried to stop watching for pid ~p, but did not find it in watcher list"),
             {next_state, StateName, State};
         {MRef, NewWatcherList} ->
             erlang:demonitor(MRef, [flush]),
