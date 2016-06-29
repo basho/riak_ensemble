@@ -44,9 +44,10 @@
          get_info/1, stable_views/2, tree_info/1,
          watch_leader_status/1, stop_watching/1]).
 
-%% Backdoor for unit testing
+%% Backdoors for unit testing
 -ifdef(TEST).
 -export([debug_local_get/2]).
+-export([get_watchers/1]).
 -endif.
 
 %% Exported internal callback functions
@@ -215,6 +216,12 @@ watch_leader_status(Pid) when is_pid(Pid) ->
 -spec stop_watching(pid()) -> ok.
 stop_watching(Pid) when is_pid(Pid) ->
     gen_fsm:send_all_state_event(Pid, {stop_watching, self()}).
+
+-ifdef(TEST).
+-spec get_watchers(pid()) -> [{pid(), reference()}].
+get_watchers(Pid) when is_pid(Pid) ->
+    gen_fsm:sync_send_all_state_event(Pid, get_watchers).
+-endif.
 
 get_info(Pid) when is_pid(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, get_info, infinity).
@@ -1895,6 +1902,8 @@ handle_sync_event(tree_info, _From, StateName, State=#state{tree_trust=Trust,
 handle_sync_event({debug_local_get, Key}, From, StateName, State) ->
     State2 = do_local_get(From, Key, State),
     {next_state, StateName, State2};
+handle_sync_event(get_watchers, _From, StateName, State) ->
+    {reply, State#state.watchers, StateName, State};
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.
