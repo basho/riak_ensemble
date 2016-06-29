@@ -30,7 +30,6 @@
 -export([join/2, join/3, update_members/3, get_leader/1, backend_pong/1]).
 -export([kget/4, kget/5, kupdate/6, kput_once/5, kover/5, kmodify/6, kdelete/4,
          ksafe_delete/5, obj_value/2, obj_value/3]).
--export([debug_local_get/2]).
 -export([setup/2]).
 -export([probe/2, election/2, prepare/2, leading/2, following/2,
          probe/3, election/3, prepare/3, leading/3, following/3]).
@@ -44,6 +43,11 @@
 -export([count_quorum/2, ping_quorum/2, check_quorum/2, force_state/2,
          get_info/1, stable_views/2, tree_info/1,
          watch_leader_status/1, stop_watching/1]).
+
+%% Backdoor for unit testing
+-ifdef(TEST).
+-export([debug_local_get/2]).
+-endif.
 
 %% Exported internal callback functions
 -export([do_kupdate/4, do_kput_once/4, do_kmodify/4]).
@@ -333,12 +337,14 @@ local_get(Pid, Key, Timeout) when is_pid(Pid) ->
 local_put(Pid, Key, Obj, Timeout) when is_pid(Pid) ->
     riak_ensemble_router:sync_send_event(Pid, {local_put, Key, Obj}, Timeout).
 
+-ifdef(TEST).
 %% Acts like local_get, but can be used for any peer, not just the leader.
 %% Should only be used for testing purposes, since values obtained via
 %% this function provide no consistency guarantees whatsoever.
 -spec debug_local_get(pid(), term()) -> std_reply().
 debug_local_get(Pid, Key) ->
     gen_fsm:sync_send_all_state_event(Pid, {debug_local_get, Key}).
+-endif.
 
 %%%===================================================================
 %%% Core Protocol
