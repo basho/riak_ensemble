@@ -140,7 +140,7 @@
                 async         :: pid(),
                 tree          :: pid(),
                 lease         :: riak_ensemble_lease:lease_ref(),
-                watchers = [] :: [pid()],
+                watchers = [] :: [{pid(), reference()}],
                 self          :: pid()
                }).
 
@@ -1856,12 +1856,17 @@ handle_event({watch_leader_status, Pid}, StateName, State) when node(Pid) =/= no
     {next_state, StateName, State};
 handle_event({watch_leader_status, Pid}, StateName, State = #state{watchers = Watchers}) ->
     _ = notify_leader_status(Pid, StateName, State),
-    %% Might as well take this opportunity to prune any dead pids that are in the list
-    NewWatcherList = [P || P <- [Pid | Watchers], is_process_alive(P)],
-    {next_state, StateName, State#state{watchers = NewWatcherList}};
+    MRef = erlang:monitor(process, Pid),
+    {next_state, StateName, State#state{watchers = [{Pid, MRef} | Watchers]}};
 handle_event({stop_watching, Pid}, StateName, State = #state{watchers = Watchers}) ->
-    NewWatcherList = lists:delete(Pid, Watchers),
-    {next_state, StateName, State#state{watchers = NewWatcherList}};
+    case remove_watcher(Pid, Watchers) of
+        not_found ->
+            lager:warning("Tried to stop watching for pid ~p, but did not find it in watcher list"),
+            {next_state, StateName, State};
+        {MRef, NewWatcherList} ->
+            erlang:demonitor(MRef, [flush]),
+            {next_state, StateName, State#state{watchers = NewWatcherList}}
+    end;
 handle_event({reply, ReqId, Peer, Reply}, StateName, State) ->
     State2 = handle_reply(ReqId, Peer, Reply, State),
     {next_state, StateName, State2};
@@ -1895,9 +1900,25 @@ handle_sync_event(_Event, _From, StateName, State) ->
     {reply, Reply, StateName, State}.
 
 %% -spec handle_info(_, atom(), state()) -> next_state().
-handle_info({'DOWN', Ref, _, Pid, Reason}, StateName,
-  #state{mod=Mod, modstate=ModState}=State) ->
-    case Mod:handle_down(Ref, Pid, Reason, ModState) of
+handle_info({'DOWN', MRef, _, Pid, Reason}, StateName, State) ->
+    Watchers = State#state.watchers,
+    case remove_watcher(Pid, Watchers) of
+        {MRef, NewWatcherList} ->
+            {next_state, StateName, State#state{watchers = NewWatcherList}};
+        not_found ->
+            %% If the DOWN signal was not for a watcher, we must pass it through
+            %% to the callback module in case that's where it's supposed to go
+            module_handle_down(MRef, Pid, Reason, StateName, State)
+    end;
+handle_info(quorum_timeout, StateName, State) ->
+    State2 = quorum_timeout(State),
+    {next_state, StateName, State2};
+handle_info(_Info, StateName, State) ->
+    {next_state, StateName, State}.
+
+module_handle_down(MRef, Pid, Reason, StateName, State) ->
+    #state{mod=Mod, modstate=ModState} = State,
+    case Mod:handle_down(MRef, Pid, Reason, ModState) of
         false ->
             State2 = maybe_restart_worker(Pid, State),
             {next_state, StateName, State2};
@@ -1906,12 +1927,7 @@ handle_info({'DOWN', Ref, _, Pid, Reason}, StateName,
         {reset, ModState2} ->
             State2 = State#state{modstate=ModState2},
             step_down(State2)
-    end;
-handle_info(quorum_timeout, StateName, State) ->
-    State2 = quorum_timeout(State),
-    {next_state, StateName, State2};
-handle_info(_Info, StateName, State) ->
-    {next_state, StateName, State}.
+    end.
 
 -spec terminate(_,_,_) -> ok.
 terminate(_Reason, _StateName, _State) ->
@@ -2033,8 +2049,8 @@ existing_leader(_Replies, Abandoned, #fact{epoch=Epoch, seq=Seq, leader=Leader})
             undefined
     end.
 
-notify_leader_status(PidList, StateName, State) when is_list(PidList) ->
-    [notify_leader_status(P, StateName, State) || P <- PidList];
+notify_leader_status(WatcherList, StateName, State) when is_list(WatcherList) ->
+    [notify_leader_status(Pid, StateName, State) || {Pid, _MRef} <- WatcherList];
 notify_leader_status(Pid, leading, State = #state{id = Id, ensemble = Ensemble}) ->
     Pid ! {is_leading, self(), Id, Ensemble, epoch(State)};
 notify_leader_status(Pid, _, State = #state{id = Id, ensemble = Ensemble}) ->
@@ -2057,6 +2073,14 @@ peer(Id, #state{id=Id}) ->
     self();
 peer(Id, #state{ensemble=Ensemble}) ->
     riak_ensemble_manager:get_peer_pid(Ensemble, Id).
+
+remove_watcher(Pid, WatcherList) ->
+    case lists:keytake(Pid, 1, WatcherList) of
+        false ->
+            not_found;
+        {value, {_Pid, MRef}, NewWatcherList} ->
+            {MRef, NewWatcherList}
+    end.
 
 %%%===================================================================
 %%% Behaviour Interface
