@@ -30,6 +30,7 @@
          get_peer_pid/2,
          get_leader_pid/1,
          get_members/1,
+         get_local_members/1,
          get_views/1,
          get_pending/1,
          get_leader/1,
@@ -233,6 +234,12 @@ get_members(EnsembleId) ->
                     []
             end,
     compute_members(Views).
+
+-spec get_local_members(ensemble_id()) -> [peer_id()].
+get_local_members(EnsembleId) ->
+    Node = node(),
+    AllMembers = get_members(EnsembleId),
+    [Peer || Peer <- AllMembers, element(2, Peer) =:= Node].
 
 -spec get_views(ensemble_id()) -> {vsn(), views()}.
 get_views(EnsembleId) ->
