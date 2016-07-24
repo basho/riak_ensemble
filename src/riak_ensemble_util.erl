@@ -24,7 +24,9 @@
          md5/1,
          orddict_delta/2,
          shuffle/1,
-         cast_unreliable/2]).
+         cast_unreliable/2,
+         random_seed/1,
+         random_uniform/1]).
 
 %%===================================================================
 
@@ -148,7 +150,7 @@ shuffle(L=[_]) ->
     L;
 shuffle(L) ->
     Range = length(L),
-    L2 = [{random:uniform(Range), E} || E <- L],
+    L2 = [{random_uniform(Range), E} || E <- L],
     [E || {_, E} <- lists:sort(L2)].
 
 %% Copied from riak_core_send_msg.erl
@@ -158,3 +160,21 @@ cast_unreliable(Dest, Request) ->
 bang_unreliable(Dest, Msg) ->
     catch erlang:send(Dest, Msg, [noconnect, nosuspend]),
     Msg.
+
+-ifdef(rand_module).
+random_seed(Id) ->
+    {A,B,C} = os:timestamp(),
+    _ = rand:seed(exsplus, {A + erlang:phash2(Id), B + erlang:phash2(node()), C}).
+-else.
+random_seed(Id) ->
+    {A,B,C} = os:timestamp(),
+    _ = random:seed(A + erlang:phash2(Id), B + erlang:phash2(node()), C).
+-endif.
+
+-ifdef(rand_module).
+random_uniform(Range) ->
+    rand:uniform(Range).
+-else.
+random_uniform(Range) ->
+    random:uniform(Range).
+-endif.

@@ -51,7 +51,7 @@ follower_timeout() ->
 %% The election timeout used for randomized election.
 election_timeout() ->
     Timeout = follower_timeout(),
-    Timeout + random:uniform(Timeout).
+    Timeout + riak_ensemble_util:random_uniform(Timeout).
 
 %% @doc
 %% The prefollow timeout determines how long a peer waits to hear from the
