@@ -133,8 +133,9 @@ async_repair(Pid) ->
 %%%===================================================================
 
 init([Id, TreeId, Path]) ->
-    Tree = synctree:newdb(Id, [{path, Path},
-                               {tree_id, TreeId}]),
+    TreeType = application:get_env(riak_ensemble, synctree_backend, synctree_ets),
+    Tree = synctree:new(Id, default, default, TreeType, [{path, Path},
+                                                         {tree_id, TreeId}]),
     State = #state{tree=Tree},
     {ok, State}.
 

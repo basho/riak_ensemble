@@ -1,3 +1,16 @@
+riak_ensemble_ng
+-------------------
+
+This repo and the corresponding hex package differ from the `basho/riak_ensemble` in the following ways:
+
+* Removed use of `riak_ensemble_clock` replacing with OTP-18 time functionality
+* `eleveldb` is no longer the default `synctree`
+
+To use `eleveldb` as the `synctree` add the `eleveldb` dep to your projects `rebar.config` `dep` list. Add `eleveldb` to your app's `application` list *before* the entry for `riak_ensemble`. And add  to your configuration `{riak_ensemble, [{synctree_backend, synctree_leveldb}]}`.
+
+Original README
+---------------
+
 (Note: Work-in-progress documentation [here](https://github.com/basho/riak_ensemble/blob/develop/doc/Readme.md))
 
 `riak_ensemble` is a consensus library that supports creating multiple

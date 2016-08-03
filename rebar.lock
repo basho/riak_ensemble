@@ -1,3 +1,2 @@
-[{<<"eleveldb">>,{pkg,<<"eleveldb">>,<<"2.2.19">>},0},
- {<<"goldrush">>,{pkg,<<"goldrush">>,<<"0.1.8">>},1},
+[{<<"goldrush">>,{pkg,<<"goldrush">>,<<"0.1.8">>},1},
  {<<"lager">>,{pkg,<<"lager">>,<<"3.2.1">>},0}].
