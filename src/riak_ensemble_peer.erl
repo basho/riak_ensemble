@@ -359,7 +359,7 @@ debug_local_get(Pid, Key) ->
 
 -spec probe(_, state()) -> next_state().
 probe(init, State) ->
-    ?OUT("~p: probe~n", [State#state.id]),
+    lager:debug("~p: probe init", [State#state.id]),
     State2 = set_leader(undefined, State),
     case is_pending(State2) of
         true ->
@@ -393,22 +393,22 @@ probe(Msg, From, State) ->
     common(Msg, From, State, probe).
 
 pending(init, State) ->
+    lager:debug("~p: pending init", [State#state.id]),
     State2 = set_timer(?PENDING_TIMEOUT, pending_timeout, State),
     {next_state, pending, State2#state{tree_trust=false}};
 pending(pending_timeout, State) ->
+    lager:debug("~p: pending_timeout", [State#state.id]),
     probe({timeout, []}, State);
 pending({prepare, Id, NextEpoch, From}, State=#state{fact=Fact}) ->
     Epoch = epoch(State),
     case NextEpoch > Epoch of
         true ->
-            ?OUT("~p: accepting ~p from ~p (~p)~n",
-                 [State#state.id, NextEpoch, Id, Epoch]),
+            lager:debug("~p: accepting ~p from ~p (~p)", [Id, NextEpoch, Id, Epoch]),
             reply(From, Fact, State),
             State2 = cancel_timer(State),
             prefollow({init, Id, NextEpoch}, State2);
         false ->
-            ?OUT("~p: rejecting ~p from ~p (~p)~n",
-                 [State#state.id, NextEpoch, Id, Epoch]),
+            lager:debug("~p: rejecting ~p from ~p (~p)", [Id, NextEpoch, Id, Epoch]),
             {next_state, pending, State}
     end;
 pending({commit, NewFact, From}, State) ->
@@ -416,10 +416,14 @@ pending({commit, NewFact, From}, State) ->
     case NewFact#fact.epoch >= Epoch of
         true ->
             reply(From, ok, State),
+            lager:debug("~p: accepting commit from ~p for epoch ~p",
+                        [State#state.id, From, NewFact#fact.epoch]),
             State2 = local_commit(NewFact, State),
             State3 = cancel_timer(State2),
             following(init, State3);
         false ->
+            lager:debug("~p: ignoring outdated commit from ~p (~p < ~p)",
+                        [State#state.id, From, NewFact#fact.epoch, Epoch]),
             {next_state, pending, State}
     end;
 pending(Msg, State) ->
@@ -444,6 +448,7 @@ maybe_follow(Leader, State) ->
 %%%===================================================================
 
 repair(init, State=#state{tree=Tree}) ->
+    lager:debug("~p: repair", [State#state.id]),
     riak_ensemble_peer_tree:async_repair(Tree),
     {next_state, repair, State#state{tree_trust=false}};
 repair(repair_complete, State) ->
@@ -574,7 +579,7 @@ prefollow(Msg, From, State) ->
 -spec prepare(_, state()) -> next_state().
 prepare(init, State=#state{id=Id}) ->
     %% TODO: Change this hack where we keep old state and reincrement
-    ?OUT("~p: prepare~n", [State#state.id]),
+    lager:debug("~p: prepare", [State#state.id]),
     {NextEpoch, _} = increment_epoch(State),
     %% io:format("Preparing ~p to ~p :: ~p~n", [NextEpoch,
     %%                                          views(State),
@@ -623,7 +628,6 @@ prelead(Msg, From, State) ->
 
 -spec leading(_, state()) -> next_state().
 leading(init, State=#state{id=_Id, watchers=Watchers}) ->
-    ?OUT("~p: Leading~n", [_Id]),
     _ = lager:info("~p: Leading~n", [_Id]),
     start_exchange(State),
     _ = notify_leader_status(Watchers, leading, State),
@@ -791,7 +795,7 @@ reset_follower_timer(State) ->
 following(not_ready, State) ->
     following(init, State#state{ready=false});
 following(init, State) ->
-    ?OUT("~p: Following: ~p~n", [State#state.id, leader(State)]),
+    lager:debug("~p: Following: ~p", [State#state.id, leader(State)]),
     start_exchange(State),
     State2 = reset_follower_timer(State),
     {next_state, following, State2};
@@ -800,6 +804,7 @@ following(exchange_complete, State) ->
     State2 = State#state{tree_trust=true},
     {next_state, following, State2};
 following(exchange_failed, State) ->
+    lager:debug("~p: exchange failed", [State#state.id]),
     probe(init, State);
 following({commit, Fact, From}, State) ->
     State3 = case Fact#fact.epoch >= epoch(State) of
@@ -827,8 +832,7 @@ following({commit, Fact, From}, State) ->
 %%             {next_state, following, State}
 %%     end;
 following(follower_timeout, State) ->
-    ?OUT("~p: follower_timeout from ~p~n", [State#state.id, leader(State)]),
-    %% io:format("~p: follower_timeout from ~p~n", [State#state.id, leader(State)]),
+    lager:debug("~p: follower_timeout from ~p", [State#state.id, leader(State)]),
     abandon(State#state{timer=undefined});
 following({check_epoch, Leader, Epoch, From}, State) ->
     case check_epoch(Leader, Epoch, State) of
@@ -908,7 +912,7 @@ step_down(State) ->
     step_down(probe, State).
 
 step_down(Next, State=#state{lease=Lease, watchers=Watchers}) ->
-    ?OUT("~p: stepping down~n", [State#state.id]),
+    lager:debug("~p: stepping down", [State#state.id]),
     _ = notify_leader_status(Watchers, Next, State),
     riak_ensemble_lease:unlease(Lease),
     State2 = cancel_timer(State),
@@ -1017,8 +1021,6 @@ common({update_hash, _, _, MaybeFrom}, State, StateName) ->
     maybe_reply(MaybeFrom, nack, State),
     {next_state, StateName, State};
 common(Msg, State, StateName) ->
-    ?OUT("~p: ~s/ignoring: ~p~n", [State#state.id, StateName, Msg]),
-    %% io:format("~p/~p: ~s/ignoring: ~p~n", [State#state.id, self(), StateName, Msg]),
     nack(Msg, State),
     {next_state, StateName, State}.
 
@@ -1030,11 +1032,11 @@ common({force_state, {Epoch, Seq}}, From, State, StateName) ->
 common(tree_pid, From, State, StateName) ->
     gen_fsm:reply(From, State#state.tree),
     {next_state, StateName, State};
-common(tree_corrupted, From, State, _StateName) ->
+common(tree_corrupted, From, State, StateName) ->
     gen_fsm:reply(From, ok),
+    lager:debug("~p: tree_corrupted in state ~p", [State#state.id, StateName]),
     repair(init, State);
 common(_Msg, From, State, StateName) ->
-    ?OUT("~p: ~s/ignoring: ~p~n", [State#state.id, StateName, _Msg]),
     send_reply(From, nack),
     {next_state, StateName, State}.
 
@@ -1814,7 +1816,7 @@ get_value(Obj, Default, State) ->
 
 -spec init([any(),...]) -> {ok, setup, state()}.
 init([Mod, Ensemble, Id, Args]) ->
-    ?OUT("~p: starting~n", [Id]),
+    lager:debug("~p: starting peer", [Id]),
     {A,B,C} = os:timestamp(),
     _ = random:seed(A + erlang:phash2(Id),
                     B + erlang:phash2(node()),
@@ -1838,6 +1840,7 @@ init([Mod, Ensemble, Id, Args]) ->
     {ok, setup, State}.
 
 setup({init, Args}, State0=#state{id=Id, ensemble=Ensemble, ets=ETS, mod=Mod}) ->
+    lager:debug("~p: setup", [Id]),
     NumWorkers = ?WORKERS,
     {TreeId, Path} = mod_synctree(State0),
     Tree = open_hashtree(Ensemble, Id, TreeId, Path),
