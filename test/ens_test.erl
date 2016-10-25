@@ -94,3 +94,21 @@ read_until(Key) ->
             timer:sleep(100),
             read_until(Key)
     end.
+
+%% @doc Utility function used to construct test predicates. Retries the
+%%      function `Fun' until it returns `true', or until the maximum
+%%      number of retries is reached.
+wait_until(Fun) when is_function(Fun) ->
+    wait_until(Fun, 50, 100).
+
+wait_until(Fun, Retry, Delay) when Retry > 0 ->
+    Res = Fun(),
+    case Res of
+        true ->
+            ok;
+        _ when Retry == 1 ->
+            {fail, Res};
+        _ ->
+            timer:sleep(Delay),
+            wait_until(Fun, Retry-1, Delay)
+    end.

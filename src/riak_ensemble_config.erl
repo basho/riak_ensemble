@@ -127,9 +127,4 @@ notfound_read_delay() ->
     get_env(notfound_read_delay, 1).
 
 get_env(Key, Default) ->
-    case application:get_env(riak_ensemble, Key) of
-        undefined ->
-            Default;
-        {_, Val} ->
-            Val
-    end.
+    application:get_env(riak_ensemble, Key, Default).
