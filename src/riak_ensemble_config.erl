@@ -113,6 +113,27 @@ tree_validation() ->
 synchronous_tree_updates() ->
     get_env(synchronous_tree_updates, false).
 
+%% @doc LevelDB options used for synctree LevelDB instances.
+synctree_leveldb_opts() ->
+    DefaultWriteBufferMin = 4 * 1024 * 1024,
+    DefaultWriteBufferMax = 14 * 1024 * 1024,
+    Config = get_env(synctree_leveldb_opts,
+                     [{write_buffer_size_min, DefaultWriteBufferMin},
+                      {write_buffer_size_max, DefaultWriteBufferMax}]),
+    %% Use a variable write buffer size to prevent against all buffers being
+    %% flushed to disk at once when under a heavy uniform load.
+    WriteBufferMin = proplists:get_value(write_buffer_size_min, Config, DefaultWriteBufferMin),
+    WriteBufferMax = proplists:get_value(write_buffer_size_max, Config, DefaultWriteBufferMax),
+    {Offset, _} = random:uniform_s(1 + WriteBufferMax - WriteBufferMin, now()),
+    WriteBufferSize = WriteBufferMin + Offset,
+    Config2 = orddict:store(write_buffer_size, WriteBufferSize, Config),
+    Config3 = orddict:erase(write_buffer_size_min, Config2),
+    Config4 = orddict:erase(write_buffer_size_max, Config3),
+    Config5 = orddict:store(is_internal_db, true, Config4),
+    Config6 = orddict:store(use_bloomfilter, true, Config5),
+    Options = orddict:store(create_if_missing, true, Config6),
+    Options.
+
 get_env(Key, Default) ->
     case application:get_env(riak_ensemble, Key) of
         undefined ->
