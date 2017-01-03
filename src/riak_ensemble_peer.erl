@@ -2162,7 +2162,7 @@ mod_synctree(#state{ensemble=Ensemble, id=Id, mod=Mod}) ->
     {TreeId, full_path(Base)}.
 
 default_path(Ensemble, Id) ->
-    <<Name:160/integer>> = crypto:hash(sha, term_to_binary({Ensemble, Id})),
+    <<Name:160/integer>> = riak_ensemble_util:sha(term_to_binary({Ensemble, Id})),
     integer_to_list(Name).
 
 full_path(Base) ->
