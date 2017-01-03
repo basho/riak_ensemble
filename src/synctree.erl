@@ -249,13 +249,13 @@ corrupt(Key, Tree=#tree{height=Height}) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 get_segment(Key, #tree{segments=Segments}) ->
-    <<HashKey:128/integer>> = crypto:hash(md5, ensure_binary(Key)),
+    <<HashKey:128/integer>> = riak_ensemble_util:md5(ensure_binary(Key)),
     HashKey rem Segments.
 
 -spec hash([{_, binary()}]) -> hash().
 hash(Term) ->
     L = [H || {_,H} <- Term],
-    HashBin = crypto:hash(md5, L),
+    HashBin = riak_ensemble_util:md5(L),
     <<?H_MD5, HashBin/binary>>.
 
 ensure_binary(Key) when is_integer(Key) ->
