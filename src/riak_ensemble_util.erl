@@ -53,6 +53,7 @@ replace_file(FN, Data) ->
 
 %% @doc Similar to {@link file:read_file/1} but uses raw file I/O
 -spec read_file(file:filename()) -> {ok, binary()} | {error, _}.
+-ifndef(new_read_file).
 read_file(FName) ->
     case file:open(FName, [read, raw, binary]) of
         {ok, FD} ->
@@ -67,6 +68,12 @@ read_file(FName) ->
         {error,_}=Err ->
             Err
     end.
+
+-else.
+%% from 18, we can use file:read_file/1 in one step to open file and read it.
+read_file(FName) ->
+    file:read_file(FName).
+-endif.
 
 -spec read_file(file:fd(), [binary()]) -> {ok, [binary()]} | {error,_}.
 read_file(FD, Acc) ->
