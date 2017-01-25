@@ -1,6 +1,6 @@
 {application,riak_ensemble,
              [{description,"Multi-Paxos framework in Erlang"},
-              {vsn,"2.3.0"},
+              {vsn,"2.4.0"},
               {registered,[]},
               {applications,[kernel,stdlib,lager]},
               {mod,{riak_ensemble_app,[]}},
