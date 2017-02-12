@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -44,17 +44,24 @@
          get_info/1, stable_views/2, tree_info/1,
          watch_leader_status/1, stop_watching/1]).
 
-%% Backdoors for unit testing
+%% Back doors for unit testing
 -ifdef(TEST).
 -export([debug_local_get/2]).
 -export([get_watchers/1]).
 -endif.
 
+%% Unit tests need to intercept this, so call through the module.
+-ifdef(TEST).
+-export([check_epoch/3]).
+-define(CHECK_EPOCH(L, E, S), ?MODULE:check_epoch(L, E, S)).
+-else.
+-define(CHECK_EPOCH(L, E, S), check_epoch(L, E, S)).
+-endif.
+
 %% Exported internal callback functions
 -export([do_kupdate/4, do_kput_once/4, do_kmodify/4]).
 
--compile({pulse_replace_module,
-          [{gen_fsm, pulse_gen_fsm}]}).
+-compile({pulse_replace_module, [{gen_fsm, pulse_gen_fsm}]}).
 
 %% gen_fsm callbacks
 -export([init/1, handle_event/3, handle_sync_event/4, handle_info/3,
@@ -81,24 +88,25 @@
 
 %%%===================================================================
 
--record(fact, {epoch    :: epoch(),
-               seq      :: seq(),
-               leader   :: peer_id(),
+-record(fact, {
+    epoch           :: epoch(),
+    seq             :: seq(),
+    leader          :: leader_id(),
 
-               %% The epoch/seq which committed current view
-               view_vsn :: {epoch(), seq()},
+    %% The epoch/seq which committed current view
+    view_vsn        :: {epoch(), seq()},
 
-               %% The epoch/seq which committed current pending view
-               pend_vsn :: {epoch(), seq()},
+    %% The epoch/seq which committed current pending view
+    pend_vsn        :: undefined | {epoch(), seq()},
 
-               %% The epoch/seq of last commited view change. In other words,
-               %% the pend_vsn for the last pending view that has since been
-               %% transitioned to (ie. no longer pending)
-               commit_vsn :: {epoch(), seq()},
+    %% The epoch/seq of last commited view change. In other words,
+    %% the pend_vsn for the last pending view that has since been
+    %% transitioned to (ie. no longer pending)
+    commit_vsn      :: undefined | {epoch(), seq()},
 
-               pending  :: {vsn(), views()},
-               views    :: [[peer_id()]]
-              }).
+    pending         :: undefined | {vsn(), views()},
+    views           :: undefined | [[peer_id()]]
+}).
 
 -type fact() :: #fact{}.
 
@@ -120,30 +128,31 @@
 -type maybe_peer_id() :: undefined | peer_id().
 -type modify_fun() :: fun() | {module(), atom(), term()}.
 
--record(state, {id            :: peer_id(),
-                ensemble      :: ensemble_id(),
-                ets           :: ets:tid(),
-                fact          :: fact(),
-                awaiting      :: riak_ensemble_msg:msg_state(),
-                preliminary   :: {peer_id(), epoch()},
-                abandoned     :: {epoch(), seq()},
-                timer         :: timer(),
-                ready = false :: boolean(),
-                members       :: [peer_id()],
-                peers         :: [{peer_id(), pid()}],
-                mod           :: module(),
-                modstate      :: any(),
-                workers       :: tuple(),
-                tree_trust    :: boolean(),
-                tree_ready    :: boolean(),
-                alive         :: integer(),
-                last_views    :: [[peer_id()]],
-                async         :: pid(),
-                tree          :: pid(),
-                lease         :: riak_ensemble_lease:lease_ref(),
-                watchers = [] :: [{pid(), reference()}],
-                self          :: pid()
-               }).
+-record(state, {
+    id                  :: peer_id(),
+    ensemble            :: ensemble_id(),
+    ets                 :: ets:tid(),
+    fact                :: undefined | fact(),
+    awaiting            :: undefined | riak_ensemble_msg:msg_state(),
+    preliminary         :: undefined | {peer_id(), epoch()},
+    abandoned           :: undefined | {epoch(), seq()},
+    timer               :: timer(),
+    ready       = false :: boolean(),
+    members             :: undefined | [peer_id()],
+    peers               :: undefined | [{peer_id(), pid()}],
+    mod                 :: module(),
+    modstate            :: any(),
+    workers             :: undefined | tuple(),
+    tree_trust          :: boolean(),
+    tree_ready          :: undefined | boolean(),
+    alive               :: integer(),
+    last_views          :: undefined | [[peer_id()]],
+    async               :: undefined | pid(),
+    tree                :: undefined | pid(),
+    lease               :: undefined | riak_ensemble_lease:lease_ref(),
+    watchers    = []    :: [{pid(), reference()}],
+    self                :: undefined | pid()
+}).
 
 -type state() :: #state{}.
 
@@ -359,7 +368,7 @@ debug_local_get(Pid, Key) ->
 
 -spec probe(_, state()) -> next_state().
 probe(init, State) ->
-    lager:debug("~p: probe init", [State#state.id]),
+    _ = lager:debug("~p: probe init", [State#state.id]),
     State2 = set_leader(undefined, State),
     case is_pending(State2) of
         true ->
@@ -393,22 +402,22 @@ probe(Msg, From, State) ->
     common(Msg, From, State, probe).
 
 pending(init, State) ->
-    lager:debug("~p: pending init", [State#state.id]),
+    _ = lager:debug("~p: pending init", [State#state.id]),
     State2 = set_timer(?PENDING_TIMEOUT, pending_timeout, State),
     {next_state, pending, State2#state{tree_trust=false}};
 pending(pending_timeout, State) ->
-    lager:debug("~p: pending_timeout", [State#state.id]),
+    _ = lager:debug("~p: pending_timeout", [State#state.id]),
     probe({timeout, []}, State);
 pending({prepare, Id, NextEpoch, From}, State=#state{fact=Fact}) ->
     Epoch = epoch(State),
     case NextEpoch > Epoch of
         true ->
-            lager:debug("~p: accepting ~p from ~p (~p)", [Id, NextEpoch, Id, Epoch]),
+            _ = lager:debug("~p: accepting ~p from ~p (~p)", [Id, NextEpoch, Id, Epoch]),
             reply(From, Fact, State),
             State2 = cancel_timer(State),
             prefollow({init, Id, NextEpoch}, State2);
         false ->
-            lager:debug("~p: rejecting ~p from ~p (~p)", [Id, NextEpoch, Id, Epoch]),
+            _ = lager:debug("~p: rejecting ~p from ~p (~p)", [Id, NextEpoch, Id, Epoch]),
             {next_state, pending, State}
     end;
 pending({commit, NewFact, From}, State) ->
@@ -416,13 +425,13 @@ pending({commit, NewFact, From}, State) ->
     case NewFact#fact.epoch >= Epoch of
         true ->
             reply(From, ok, State),
-            lager:debug("~p: accepting commit from ~p for epoch ~p",
+            _ = lager:debug("~p: accepting commit from ~p for epoch ~p",
                         [State#state.id, From, NewFact#fact.epoch]),
             State2 = local_commit(NewFact, State),
             State3 = cancel_timer(State2),
             following(init, State3);
         false ->
-            lager:debug("~p: ignoring outdated commit from ~p (~p < ~p)",
+            _ = lager:debug("~p: ignoring outdated commit from ~p (~p < ~p)",
                         [State#state.id, From, NewFact#fact.epoch, Epoch]),
             {next_state, pending, State}
     end;
@@ -448,7 +457,7 @@ maybe_follow(Leader, State) ->
 %%%===================================================================
 
 repair(init, State=#state{tree=Tree}) ->
-    lager:debug("~p: repair", [State#state.id]),
+    _ = lager:debug("~p: repair", [State#state.id]),
     riak_ensemble_peer_tree:async_repair(Tree),
     {next_state, repair, State#state{tree_trust=false}};
 repair(repair_complete, State) ->
@@ -579,7 +588,7 @@ prefollow(Msg, From, State) ->
 -spec prepare(_, state()) -> next_state().
 prepare(init, State=#state{id=Id}) ->
     %% TODO: Change this hack where we keep old state and reincrement
-    lager:debug("~p: prepare", [State#state.id]),
+    _ = lager:debug("~p: prepare", [State#state.id]),
     {NextEpoch, _} = increment_epoch(State),
     %% io:format("Preparing ~p to ~p :: ~p~n", [NextEpoch,
     %%                                          views(State),
@@ -795,7 +804,7 @@ reset_follower_timer(State) ->
 following(not_ready, State) ->
     following(init, State#state{ready=false});
 following(init, State) ->
-    lager:debug("~p: Following: ~p", [State#state.id, leader(State)]),
+    _ = lager:debug("~p: Following: ~p", [State#state.id, leader(State)]),
     start_exchange(State),
     State2 = reset_follower_timer(State),
     {next_state, following, State2};
@@ -804,7 +813,7 @@ following(exchange_complete, State) ->
     State2 = State#state{tree_trust=true},
     {next_state, following, State2};
 following(exchange_failed, State) ->
-    lager:debug("~p: exchange failed", [State#state.id]),
+    _ = lager:debug("~p: exchange failed", [State#state.id]),
     probe(init, State);
 following({commit, Fact, From}, State) ->
     State3 = case Fact#fact.epoch >= epoch(State) of
@@ -832,10 +841,10 @@ following({commit, Fact, From}, State) ->
 %%             {next_state, following, State}
 %%     end;
 following(follower_timeout, State) ->
-    lager:debug("~p: follower_timeout from ~p", [State#state.id, leader(State)]),
+    _ = lager:debug("~p: follower_timeout from ~p", [State#state.id, leader(State)]),
     abandon(State#state{timer=undefined});
 following({check_epoch, Leader, Epoch, From}, State) ->
-    case check_epoch(Leader, Epoch, State) of
+    case ?CHECK_EPOCH(Leader, Epoch, State) of
         true ->
             reply(From, ok, State);
         false ->
@@ -912,7 +921,7 @@ step_down(State) ->
     step_down(probe, State).
 
 step_down(Next, State=#state{lease=Lease, watchers=Watchers}) ->
-    lager:debug("~p: stepping down", [State#state.id]),
+    _ = lager:debug("~p: stepping down", [State#state.id]),
     _ = notify_leader_status(Watchers, Next, State),
     riak_ensemble_lease:unlease(Lease),
     State2 = cancel_timer(State),
@@ -1034,7 +1043,7 @@ common(tree_pid, From, State, StateName) ->
     {next_state, StateName, State};
 common(tree_corrupted, From, State, StateName) ->
     gen_fsm:reply(From, ok),
-    lager:debug("~p: tree_corrupted in state ~p", [State#state.id, StateName]),
+    _ = lager:debug("~p: tree_corrupted in state ~p", [State#state.id, StateName]),
     repair(init, State);
 common(_Msg, From, State, StateName) ->
     send_reply(From, nack),
@@ -1508,12 +1517,7 @@ check_lease(State=#state{id=Id}) ->
 
 -spec valid_lease(state()) -> boolean().
 valid_lease(#state{lease=Lease}) ->
-    case riak_ensemble_config:trust_lease() of
-        true ->
-            riak_ensemble_lease:check_lease(Lease);
-        _ ->
-            false
-    end.
+    riak_ensemble_config:trust_lease() andalso riak_ensemble_lease:check_lease(Lease).
 
 maybe_repair(Key, Latest, Replies, State=#state{id=Id}) ->
     %% TODO: Should only send puts to peers that are actually divergent.
@@ -1674,7 +1678,7 @@ put_obj(Key, Obj, Seq, State=#state{id=Id, members=Members, self=Self}) ->
     {Future, State2} = blocking_send_all({put, Key, Obj2, Id, Epoch}, Peers, State),
     case local_put(Self, Key, Obj2, ?LOCAL_PUT_TIMEOUT) of
         failed ->
-            lager:warning("Failed local_put for Key ~p, Id = ~p", [Key, Id]),
+            _ = lager:warning("Failed local_put for Key ~p, Id = ~p", [Key, Id]),
             gen_fsm:sync_send_event(Self, request_failed, infinity),
             {failed, State2};
         Local ->
@@ -1742,7 +1746,7 @@ verify_hash(Key, notfound, KnownHash, _State) ->
         notfound ->
             true;
         _ ->
-            lager:warning("~p detected as corrupted", [Key]),
+            _ = lager:warning("~p detected as corrupted", [Key]),
             false
     end;
 verify_hash(Key, Obj, KnownHash, State) ->
@@ -1756,7 +1760,7 @@ verify_hash(Key, Obj, KnownHash, State) ->
                 true ->
                     true;
                 false ->
-                    lager:warning("~p detected as corrupted :: ~p",
+                    _ = lager:warning("~p detected as corrupted :: ~p",
                                   [Key, {ObjHash, KnownHash}]),
                     false
             end
@@ -1816,11 +1820,7 @@ get_value(Obj, Default, State) ->
 
 -spec init([any(),...]) -> {ok, setup, state()}.
 init([Mod, Ensemble, Id, Args]) ->
-    lager:debug("~p: starting peer", [Id]),
-    {A,B,C} = os:timestamp(),
-    _ = random:seed(A + erlang:phash2(Id),
-                    B + erlang:phash2(node()),
-                    C),
+    _ = lager:debug("~p: starting peer", [Id]),
     ETS = ets:new(x, [public, {read_concurrency, true}, {write_concurrency, true}]),
     TreeTrust = case riak_ensemble_config:tree_validation() of
                     false ->
@@ -1840,7 +1840,7 @@ init([Mod, Ensemble, Id, Args]) ->
     {ok, setup, State}.
 
 setup({init, Args}, State0=#state{id=Id, ensemble=Ensemble, ets=ETS, mod=Mod}) ->
-    lager:debug("~p: setup", [Id]),
+    _ = lager:debug("~p: setup", [Id]),
     NumWorkers = ?WORKERS,
     {TreeId, Path} = mod_synctree(State0),
     Tree = open_hashtree(Ensemble, Id, TreeId, Path),
@@ -1855,19 +1855,19 @@ setup({init, Args}, State0=#state{id=Id, ensemble=Ensemble, ets=ETS, mod=Mod}) -
                          lease=Lease,
                          modstate=riak_ensemble_backend:start(Mod, Ensemble, Id, Args)},
     State2 = check_views(State),
-    %% TODO: Why are we local commiting on startup?
+    %% TODO: Why are we local committing on startup?
     State3 = local_commit(State2#state.fact, State2),
     probe(init, State3).
 
 -spec handle_event(_, atom(), state()) -> {next_state, atom(), state()}.
 handle_event({watch_leader_status, Pid}, StateName, State) when node(Pid) =/= node() ->
-    lager:debug("Remote pid ~p not allowed to watch_leader_status on ensemble peer ~p",
+    _ = lager:debug("Remote pid ~p not allowed to watch_leader_status on ensemble peer ~p",
                 [Pid, State#state.id]),
     {next_state, StateName, State};
 handle_event({watch_leader_status, Pid}, StateName, State = #state{watchers = Watchers}) ->
     case is_watcher(Pid, Watchers) of
         true ->
-            lager:debug("Got watch_leader_status for ~p, but pid already in watchers list"),
+            _ = lager:debug("Got watch_leader_status for ~p, but pid already in watchers list"),
             {next_state, StateName, State};
         false ->
             _ = notify_leader_status(Pid, StateName, State),
@@ -1877,7 +1877,7 @@ handle_event({watch_leader_status, Pid}, StateName, State = #state{watchers = Wa
 handle_event({stop_watching, Pid}, StateName, State = #state{watchers = Watchers}) ->
     case remove_watcher(Pid, Watchers) of
         not_found ->
-            lager:debug("Tried to stop watching for pid ~p, but did not find it in watcher list"),
+            _ = lager:debug("Tried to stop watching for pid ~p, but did not find it in watcher list"),
             {next_state, StateName, State};
         {MRef, NewWatcherList} ->
             erlang:demonitor(MRef, [flush]),
@@ -2074,7 +2074,7 @@ notify_leader_status(Pid, leading, State = #state{id = Id, ensemble = Ensemble})
 notify_leader_status(Pid, _, State = #state{id = Id, ensemble = Ensemble}) ->
     Pid ! {is_not_leading, self(), Id, Ensemble, epoch(State)}.
 
--spec compute_members([[any()]]) -> [any()].
+-spec compute_members(undefined | [list()]) -> list().
 compute_members(undefined) ->
     [];
 compute_members(Views) ->
@@ -2176,8 +2176,9 @@ open_hashtree(Ensemble, Id, TreeId, Path) ->
     try
         {ok, Pid} = riak_ensemble_peer_tree:start_link({Ensemble, Id}, TreeId, Path),
         Pid
-    catch A:B ->
-            lager:info("Failed to open hashtree: ~p/~p", [A,B]),
+    catch
+        A:B ->
+            _ = lager:info("Failed to open hashtree: ~p/~p", [A,B]),
             timer:sleep(1000),
             open_hashtree(Ensemble, Id, TreeId, Path)
     end.
@@ -2211,8 +2212,8 @@ maybe_save_fact(State=#state{ensemble=Ensemble, id=Id, fact=NewFact}) ->
 -spec should_save(fact(), fact()) -> boolean().
 should_save(NewFact, OldFact) ->
     %% Ignore sequence number when comparing
-    A = NewFact#fact{seq=undefined},
-    B = OldFact#fact{seq=undefined},
+    A = NewFact#fact{seq = 0},
+    B = OldFact#fact{seq = 0},
     A =/= B.
 
 -spec save_fact(state()) -> ok | {error,_}.

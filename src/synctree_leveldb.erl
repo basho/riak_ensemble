@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2014 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2014-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -17,18 +17,21 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+
 -module(synctree_leveldb).
 
--export([init_ets/0,
-         new/1,
-         fetch/3,
-         exists/2,
-         store/3,
-         store/2]).
+-export([
+    init_ets/0,
+    new/1,
+    fetch/3,
+    exists/2,
+    store/3,
+    store/2]).
 
--record(?MODULE, {id   :: binary(),
-                  db   :: any(),
-                  path :: term()}).
+-record(?MODULE, {
+    id :: binary(),
+    db :: any(),
+    path :: term()}).
 
 -define(STATE, #?MODULE).
 -type state() :: ?STATE{}.
@@ -52,8 +55,8 @@
 -spec init_ets() -> ok.
 init_ets() ->
     _ = ets:new(?MODULE, [named_table, set, public,
-                          {read_concurrency, true},
-                          {write_concurrency, true}]),
+        {read_concurrency, true},
+        {write_concurrency, true}]),
     ok.
 
 -spec new(_) -> state().
@@ -61,7 +64,7 @@ new(Opts) ->
     Path = get_path(Opts),
     {ok, DB} = maybe_open_leveldb(Path, ?RETRIES),
     Id = get_tree_id(Opts),
-    ?STATE{id=Id, path=Path, db=DB}.
+    ?STATE{id = Id, path = Path, db = DB}.
 
 maybe_open_leveldb(Path, Retries) ->
     %% Check if we have already opened this LevelDB instance, which can
@@ -70,16 +73,16 @@ maybe_open_leveldb(Path, Retries) ->
         [{_, DB}] ->
             {ok, DB};
         _ ->
-	    ok = filelib:ensure_dir(Path),
-	    case eleveldb:open(Path, leveldb_opts()) of
-		{ok, DB} ->
-		    %% If eleveldb:open succeeded, we should have the only ref
-		    true = ets:insert_new(?MODULE, {Path, DB}),
-		    {ok, DB};
-		_ when Retries > 0 ->
-		    timer:sleep(100),
-		    maybe_open_leveldb(Path, Retries - 1)
-	    end
+            ok = filelib:ensure_dir(Path),
+            case eleveldb:open(Path, leveldb_opts()) of
+                {ok, DB} ->
+                    %% If eleveldb:open succeeded, we should have the only ref
+                    true = ets:insert_new(?MODULE, {Path, DB}),
+                    {ok, DB};
+                _ when Retries > 0 ->
+                    timer:sleep(100),
+                    maybe_open_leveldb(Path, Retries - 1)
+            end
     end.
 
 
@@ -87,7 +90,7 @@ get_path(Opts) ->
     case proplists:get_value(path, Opts) of
         undefined ->
             Base = "/tmp/ST",
-            Name = integer_to_list(timestamp(erlang:now())),
+            Name = integer_to_list(timestamp(os:timestamp())),
             filename:join(Base, Name);
         Path ->
             Path
@@ -104,12 +107,12 @@ get_tree_id(Opts) ->
 db_key(Id, {Level, Bucket}) ->
     db_key(Id, Level, Bucket).
 
-db_key(Id, Level, Bucket)  when is_integer(Level), is_integer(Bucket) ->
+db_key(Id, Level, Bucket) when is_integer(Level), is_integer(Bucket) ->
     BucketBin = binary:encode_unsigned(Bucket),
-    <<?K_BUCKET:8/integer, Id/binary,  Level:8/integer, BucketBin/binary>>.
+    <<?K_BUCKET:8/integer, Id/binary, Level:8/integer, BucketBin/binary>>.
 
 -spec fetch(_, _, state()) -> {ok, _}.
-fetch({Level, Bucket}, Default, ?STATE{id=Id, db=DB}) ->
+fetch({Level, Bucket}, Default, ?STATE{id = Id, db = DB}) ->
     DBKey = db_key(Id, Level, Bucket),
     case eleveldb:get(DB, DBKey, []) of
         {ok, Bin} ->
@@ -122,7 +125,7 @@ fetch({Level, Bucket}, Default, ?STATE{id=Id, db=DB}) ->
             {ok, Default}
     end.
 
-exists({Level, Bucket}, ?STATE{id=Id, db=DB}) ->
+exists({Level, Bucket}, ?STATE{id = Id, db = DB}) ->
     DBKey = db_key(Id, Level, Bucket),
     case eleveldb:get(DB, DBKey, []) of
         {ok, _} ->
@@ -132,31 +135,31 @@ exists({Level, Bucket}, ?STATE{id=Id, db=DB}) ->
     end.
 
 -spec store(_, _, state()) -> state().
-store({Level, Bucket}, Val, State=?STATE{id=Id, db=DB}) ->
+store({Level, Bucket}, Val, State = ?STATE{id = Id, db = DB}) ->
     DBKey = db_key(Id, Level, Bucket),
     %% Intentionally ignore errors (TODO: Should we?)
     _ = eleveldb:put(DB, DBKey, term_to_binary(Val), []),
     State.
 
--spec store([{_,_}], state()) -> state().
-store(Updates, State=?STATE{id=Id, db=DB}) ->
+-spec store([{_, _}], state()) -> state().
+store(Updates, State = ?STATE{id = Id, db = DB}) ->
     %% TODO: Should we sort first? Doesn't LevelDB do that automatically in memtable?
     DBUpdates = [case Update of
-                     {put, Key, Val} ->
-                         {put, db_key(Id, Key), term_to_binary(Val)};
-                     {delete, Key} ->
-                         {delete, db_key(Id, Key)}
-                 end || Update <- Updates],
+        {put, Key, Val} ->
+            {put, db_key(Id, Key), term_to_binary(Val)};
+        {delete, Key} ->
+            {delete, db_key(Id, Key)}
+    end || Update <- Updates],
     %% Intentionally ignore errors (TODO: Should we?)
     _ = eleveldb:write(DB, DBUpdates, []),
     State.
 
 timestamp({Mega, Secs, Micro}) ->
-    Mega*1000*1000*1000*1000 + Secs * 1000 * 1000 + Micro.
+    Mega * 1000 * 1000 * 1000 * 1000 + Secs * 1000 * 1000 + Micro.
 
 leveldb_opts() ->
     [{is_internal_db, true},
-     {write_buffer_size, 4 * 1024 * 1024},
-     {use_bloomfilter, true},
-     {create_if_missing, true}].
+        {write_buffer_size, 4 * 1024 * 1024},
+        {use_bloomfilter, true},
+        {create_if_missing, true}].
 

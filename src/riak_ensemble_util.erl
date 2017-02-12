@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -17,14 +17,19 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+
 -module(riak_ensemble_util).
--export([replace_file/2,
-         read_file/1,
-         sha/1,
-         md5/1,
-         orddict_delta/2,
-         shuffle/1,
-         cast_unreliable/2]).
+
+-export([
+    cast_unreliable/2,
+    orddict_delta/2,
+    rand_module/0,
+    rand_uniform/0,
+    rand_uniform/1,
+    read_file/1,
+    replace_file/2,
+    shuffle/1
+]).
 
 %%===================================================================
 
@@ -81,30 +86,6 @@ read_file(FD, Acc) ->
 
 %%===================================================================
 
--ifndef(old_hash).
-
--spec sha(iolist() | binary()) -> binary().
-sha(Bin) ->
-    crypto:hash(sha, Bin).
-
--spec md5(iolist() | binary()) -> binary().
-md5(Bin) ->
-    crypto:hash(md5, Bin).
-
--else.
-
--spec sha(iolist() | binary()) -> binary().
-sha(Bin) ->
-    crypto:sha(Bin).
-
--spec md5(iolist() | binary()) -> binary().
-md5(Bin) ->
-    crypto:md5(Bin).
-
--endif.
-
-%%===================================================================
-
 %% @doc
 %% Compare two orddicts, returning a list of differences between
 %% them. Differences come in three forms:
@@ -148,7 +129,8 @@ shuffle(L=[_]) ->
     L;
 shuffle(L) ->
     Range = length(L),
-    L2 = [{random:uniform(Range), E} || E <- L],
+    Rand = rand_module(),
+    L2 = [{Rand:uniform(Range), E} || E <- L],
     [E || {_, E} <- lists:sort(L2)].
 
 %% Copied from riak_core_send_msg.erl
@@ -158,3 +140,44 @@ cast_unreliable(Dest, Request) ->
 bang_unreliable(Dest, Msg) ->
     catch erlang:send(Dest, Msg, [noconnect, nosuspend]),
     Msg.
+
+%% @doc Equivalent to rand/random uniform/0.
+%% The PRNG is guaranteed to be seeded, but it's not possible to tell if its
+%% current seed is derived from a constant ancestor.
+rand_uniform() ->
+    Mod = rand_module(),
+    Mod:uniform().
+
+%% @doc Equivalent to rand/random uniform/1.
+%% The PRNG is guaranteed to be seeded, but it's not possible to tell if its
+%% current seed is derived from a constant ancestor.
+rand_uniform(N) ->
+    Mod = rand_module(),
+    Mod:uniform(N).
+
+%% @doc Get the rand/random module to use for calls to uniform/0-1.
+%% It is NOT safe to call the seed-related functions, as they differ between
+%% modules, but the PRNG is guaranteed to be seeded in the process in which
+%% this function is called.
+rand_module() ->
+    Key = {?MODULE, rand_mod},
+    case erlang:get(Key) of
+        undefined ->
+            Mod = case code:which(rand) of
+                non_existing ->
+                    M = random,
+                    case erlang:get(random_seed) of
+                        undefined ->
+                            _ = M:seed(os:timestamp()),
+                            M;
+                        _ ->
+                            M
+                    end;
+                _ ->
+                    rand
+            end,
+            _ = erlang:put(Key, Mod),
+            Mod;
+        Val ->
+            Val
+    end.

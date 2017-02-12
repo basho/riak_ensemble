@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -69,11 +69,12 @@
 
 -type gen_server_from() :: any().
 
--record(state, {savefile :: file:filename(),
-                waiting  :: [gen_server_from()],
-                previous :: binary(),
-                timer    :: reference()}).
-
+-record(state, {
+    savefile        :: file:filename(),
+    waiting = []    :: [gen_server_from()],
+    previous        :: undefined | binary(),
+    timer           :: undefined | reference()
+}).
 -type state() :: #state{}.
 
 %%%===================================================================

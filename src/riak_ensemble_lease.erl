@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2014 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2014-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -48,19 +48,29 @@
 %% trust_lease application variable to false, causing riak_ensemble to ignore
 %% leader leases and always perform full quorum operations.
 %%
-
 -module(riak_ensemble_lease).
 
--export([start_link/0,
-         check_lease/1,
-         lease/2,
-         unlease/1]).
+%% TODO: This Really, Really should be a gen_server!
+
+-export([
+    start_link/0,
+    check_lease/1,
+    lease/2,
+    unlease/1
+]).
+
+-export_type([lease_ref/0]).
 
 %% internal exports
 -export([init/2, loop/2]).
 
--type lease_ref() :: {pid(), ets:tid()}.
--export_type([lease_ref/0]).
+-record(lref, {
+    pid     :: pid(),
+    table   :: ets:tid(),
+    mono_ms :: fun(() -> integer())
+}).
+
+-opaque lease_ref() :: #lref{}.
 
 %%%===================================================================
 
@@ -74,70 +84,64 @@ start_link() ->
     end.
 
 -spec check_lease(lease_ref()) -> boolean().
-check_lease({_, T}) ->
-    case ets:lookup_element(T, lease, 2) of
+check_lease(#lref{table = Table, mono_ms = TFun}) ->
+    case ets:lookup_element(Table, lease, 2) of
         undefined ->
             false;
         Until ->
-            case riak_ensemble_clock:monotonic_time_ms() of
-                {ok, Time} when Time < Until ->
-                    true;
-                _ ->
-                    false
-            end
+            TFun() < Until
     end.
 
 -spec lease(lease_ref(), timeout()) -> ok.
-lease({Pid,_}, Duration) ->
+lease(#lref{pid = Pid}, Duration) ->
     ok = call(Pid, {lease, Duration}).
 
 -spec unlease(lease_ref()) -> ok.
-unlease({Pid,_}) ->
+unlease(#lref{pid = Pid}) ->
     ok = call(Pid, unlease).
 
 %%%===================================================================
 
 init(Parent, Ref) ->
-    T = ets:new(?MODULE, [protected, set, {read_concurrency, true}]),
-    ets:insert(T, {lease, undefined}),
-    Reply = {ok, {self(), T}},
+    Table = ets:new(?MODULE, [protected, set, {read_concurrency, true}]),
+    ets:insert(Table, {lease, undefined}),
+    TFun = riak_ensemble_clock:monotonic_ms_fun(),
+    LRef = #lref{pid = erlang:self(), table = Table, mono_ms = TFun},
+    Reply = {ok, LRef},
     Parent ! {Ref, Reply},
-    loop(T, infinity).
+    loop(LRef, infinity).
 
 %%%===================================================================
 
-loop(T, Timeout) ->
+loop(#lref{table = Table, mono_ms = TFun} = LRef, Timeout) ->
     receive
         {{lease, Duration}, From} ->
-            case riak_ensemble_clock:monotonic_time_ms() of
-                {ok, Time} ->
-                    ets:insert(T, {lease, Time + Duration});
-                error ->
-                    ets:insert(T, {lease, undefined})
-            end,
+            Lease = (TFun() + Duration),
+            ets:insert(Table, {lease, Lease}),
             reply(From, ok),
-            ?MODULE:loop(T, Duration);
+            loop(LRef, Duration);
         {unlease, From} ->
-            ets:insert(T, {lease, undefined}),
+            ets:insert(Table, {lease, undefined}),
             reply(From, ok),
-            ?MODULE:loop(T, infinity)
-    after Timeout ->
-            ets:insert(T, {lease, undefined}),
-            ?MODULE:loop(T, infinity)
+            loop(LRef, infinity)
+    after
+        Timeout ->
+            ets:insert(Table, {lease, undefined}),
+            loop(LRef, infinity)
     end.
 
 %%%===================================================================
 
 call(Pid, Msg) ->
-    MRef = monitor(process, Pid),
-    From = {self(), MRef},
+    MRef = erlang:monitor(process, Pid),
+    From = {erlang:self(), MRef},
     Pid ! {Msg, From},
     receive
         {MRef, Reply} ->
             erlang:demonitor(MRef, [flush]),
             Reply;
         {'DOWN', MRef, _, _, Reason} ->
-            exit(Reason)
+            erlang:exit(Reason)
     end.
 
 reply({Pid, Ref}, Reply) ->

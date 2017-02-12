@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -17,6 +17,7 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+
 -module(riak_ensemble_peer_tree).
 -behaviour(gen_server).
 
@@ -42,8 +43,10 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--record(state, {tree :: any(),
-                corrupted :: {integer(), integer()}}).
+-record(state, {
+    tree        :: any(),
+    corrupted   :: undefined | {integer(), integer()}
+}).
 -type state() :: #state{}.
 
 %%%===================================================================

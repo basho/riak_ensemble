@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -23,68 +23,70 @@
 -module(riak_ensemble_manager).
 
 %% API
--export([start/0,
-         start_link/0,
-         cluster/0,
-         get_cluster_state/0,
-         get_peer_pid/2,
-         get_leader_pid/1,
-         get_members/1,
-         get_views/1,
-         get_pending/1,
-         get_leader/1,
-         get_peer_info/2,
-         rleader_pid/0,
-         update_ensemble/4,
-         gossip/1,
-         gossip_pending/3,
-         join/2,
-         remove/2,
-         enabled/0,
-         enable/0,
-         create_ensemble/4,
-         create_ensemble/5,
-         known_ensembles/0,
-         check_quorum/2,
-         count_quorum/2]).
+-export([
+    start/0,
+    start_link/0,
+    cluster/0,
+    get_cluster_state/0,
+    get_peer_pid/2,
+    get_leader_pid/1,
+    get_members/1,
+    get_views/1,
+    get_pending/1,
+    get_leader/1,
+    get_peer_info/2,
+    rleader_pid/0,
+    update_ensemble/4,
+    gossip/1,
+    gossip_pending/3,
+    join/2,
+    remove/2,
+    enabled/0,
+    enable/0,
+    create_ensemble/4,
+    create_ensemble/5,
+    known_ensembles/0,
+    check_quorum/2,
+    count_quorum/2
+]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3]).
+    terminate/2, code_change/3]).
 
 -include_lib("riak_ensemble_types.hrl").
 -define(ETS, ?MODULE).
 
--type vsn_views()     :: {vsn(), views()}.
+-type vsn_views() :: {vsn(), views()}.
 -type ensemble_data() :: {ensemble_id(), leader_id(), vsn_views(), vsn_views()}.
--type ensembles()     :: orddict(ensemble_id(), ensemble_data()).
+-type ensembles() :: orddict(ensemble_id(), ensemble_data()).
 -type cluster_state() :: riak_ensemble_state:state().
 
--record(state, {version       :: integer(),
-                ensemble_data :: ensembles(),
-                remote_peers  :: orddict(peer_id(), pid()),
-                cluster_state :: cluster_state()
-               }).
+-record(state, {
+    version         :: undefined | integer(),
+    ensemble_data   :: ensembles(),
+    remote_peers    :: orddict(peer_id(), pid()),
+    cluster_state   :: undefined | cluster_state()
+}).
 
 -type state() :: #state{}.
 
--type call_msg() :: {join, node()} |
-                    {remove, node()}.
+-type call_msg() :: {join | remove, node()}.
 
--type cast_msg() :: {update_ensembles, [{ensemble_id(), ensemble_info()}]} |
-                    {update_root_ensemble, ensemble_info()}                |
-                    {peer_pid, peer_id(), pid()}                           |
-                    {request_peer_pid,pid(), {ensemble_id(), peer_id()}}.
+-type cast_msg() :: {update_ensembles, [{ensemble_id(), ensemble_info()}]}
+                    | {update_root_ensemble, ensemble_info()}
+                    | {peer_pid, peer_id(), pid()}
+                    | {request_peer_pid, pid(), {ensemble_id(), peer_id()}}.
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 
--spec start() -> 'ignore' | {'error',_} | {'ok',pid()}.
+-spec start() -> 'ignore' | {'error', _} | {'ok', pid()}.
 start() ->
     gen_server:start({local, ?MODULE}, ?MODULE, [], []).
 
--spec start_link() -> 'ignore' | {'error',_} | {'ok',pid()}.
+-spec start_link() -> 'ignore' | {'error', _} | {'ok', pid()}.
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
@@ -103,7 +105,7 @@ enabled() ->
     try
         ets:lookup_element(?ETS, enabled, 2)
     catch _:_ ->
-            false
+        false
     end.
 
 -spec enable() -> ok | error.
@@ -120,11 +122,11 @@ get_leader_pid(Ensemble) ->
     end.
 
 -spec get_peer_info(ensemble_id(), peer_id()) -> nodedown | undefined | peer_info().
-get_peer_info(Ensemble, Peer={_, Node}) ->
+get_peer_info(Ensemble, Peer = {_, Node}) ->
     try
         gen_server:call({?MODULE, Node}, {peer_info, Ensemble, Peer}, 60000)
     catch
-        exit:{{nodedown, _},_} ->
+        exit:{{nodedown, _}, _} ->
             nodedown
     end.
 
@@ -155,18 +157,18 @@ update_ensemble(Ensemble, Leader, Views, Vsn) ->
     gen_server:call(?MODULE, {update_ensemble, Ensemble, Leader, Views, Vsn}, infinity).
 
 -spec create_ensemble(ensemble_id(), peer_id(), module(), [any()])
-                     -> ok | {error, term()}.
+            -> ok | {error, term()}.
 create_ensemble(EnsembleId, PeerId, Mod, Args) ->
     create_ensemble(EnsembleId, PeerId, [PeerId], Mod, Args).
 
 -spec create_ensemble(ensemble_id(), leader_id(), [peer_id()], module(), [any()])
-                     -> ok | {error, term()}.
+            -> ok | {error, term()}.
 create_ensemble(EnsembleId, EnsLeader, Members, Mod, Args) ->
-    Info = #ensemble_info{leader=EnsLeader, views=[Members], seq={0,0}, vsn={0,0}, mod=Mod, args=Args},
+    Info = #ensemble_info{leader = EnsLeader, views = [Members], seq = {0, 0}, vsn = {0, 0}, mod = Mod, args = Args},
     riak_ensemble_root:set_ensemble(EnsembleId, Info).
 
 -spec known_ensembles() -> undefined |
-                           {ok, orddict(ensemble_id(), ensemble_info())}.
+{ok, orddict(ensemble_id(), ensemble_info())}.
 known_ensembles() ->
     case riak_ensemble_peer:kget(node(), root, cluster_state, 5000) of
         {ok, Obj} ->
@@ -190,7 +192,7 @@ cluster() ->
     try
         ets:lookup_element(?ETS, cluster, 2)
     catch _:_ ->
-            []
+        []
     end.
 
 -spec get_cluster_state() -> cluster_state().
@@ -198,7 +200,7 @@ get_cluster_state() ->
     ets:lookup_element(?ETS, cluster_state, 2).
 
 -spec get_peer_pid(ensemble_id(), peer_id()) -> pid() | undefined.
-get_peer_pid(Ensemble, PeerId={_, Node}) ->
+get_peer_pid(Ensemble, PeerId = {_, Node}) ->
     case node() of
         Node ->
             %% Local peer
@@ -221,17 +223,17 @@ get_pending(EnsembleId) ->
     try
         ets:lookup_element(?ETS, EnsembleId, 4)
     catch _:_ ->
-            undefined
+        undefined
     end.
 
 -spec get_members(ensemble_id()) -> [peer_id()].
 get_members(EnsembleId) ->
     Views = try
-                {_, Vs} = ets:lookup_element(?ETS, EnsembleId, 3),
-                Vs
-            catch _:_ ->
-                    []
-            end,
+        {_, Vs} = ets:lookup_element(?ETS, EnsembleId, 3),
+        Vs
+    catch _:_ ->
+        []
+    end,
     compute_members(Views).
 
 -spec get_views(ensemble_id()) -> {vsn(), views()}.
@@ -239,7 +241,7 @@ get_views(EnsembleId) ->
     try
         ets:lookup_element(?ETS, EnsembleId, 3)
     catch _:_ ->
-            {{0,0}, []}
+        {{0, 0}, []}
     end.
 
 -spec get_leader(ensemble_id()) -> leader_id().
@@ -247,7 +249,7 @@ get_leader(EnsembleId) ->
     try
         ets:lookup_element(?ETS, EnsembleId, 2)
     catch _:_ ->
-            undefined
+        undefined
     end.
 
 -spec check_quorum(ensemble_id(), timeout()) -> boolean().
@@ -286,7 +288,8 @@ typed_cast(Node, Msg) when is_atom(Node) ->
 
 -spec init([]) -> {ok, state()}.
 init([]) ->
-    _ = ets:new(?ETS, [named_table, public, {read_concurrency, true}, {write_concurrency, true}]),
+    _ = ets:new(?ETS,
+        [named_table, public, {read_concurrency, true}, {write_concurrency, true}]),
     State = reload_state(),
     schedule_tick(),
     true = ets:insert(?ETS, {cluster_state, State#state.cluster_state}),
@@ -302,13 +305,13 @@ handle_call(enable, _From, State) ->
                     ets:insert(?ETS, RootInfo),
                     State3 = state_changed(State2),
                     {reply, ok, State3};
-                {error,_} ->
+                {error, _} ->
                     {reply, error, State}
             end;
         error ->
             {reply, error, State}
     end;
-handle_call({join, Node}, _From, State=#state{cluster_state=LocalCS}) ->
+handle_call({join, Node}, _From, State = #state{cluster_state = LocalCS}) ->
     %% Note: The call here can deadlock if we ever join A -> B and B -> A
     %% at the same time. There is no reason that should ever occur, but
     %% to be safe we use a non-infinity timeout.
@@ -316,13 +319,13 @@ handle_call({join, Node}, _From, State=#state{cluster_state=LocalCS}) ->
         {ok, RemoteCS} ->
             case join_allowed(LocalCS, RemoteCS) of
                 true ->
-                    State2 = State#state{cluster_state=RemoteCS},
+                    State2 = State#state{cluster_state = RemoteCS},
                     case maybe_save_state(State2) of
                         ok ->
                             Reply = riak_ensemble_root:join(Node),
                             State3 = state_changed(State2),
                             {reply, Reply, State3};
-                        Error={error,_} ->
+                        Error = {error, _} ->
                             %% Failed to save, keep original state
                             {reply, Error, State}
                     end;
@@ -337,10 +340,10 @@ handle_call({remove, Node}, _From, State) ->
     State2 = state_changed(State),
     {reply, Reply, State2};
 
-handle_call(get_cluster_state, _From, State=#state{cluster_state=CS}) ->
+handle_call(get_cluster_state, _From, State = #state{cluster_state = CS}) ->
     {reply, {ok, CS}, State};
 
-handle_call({update_ensemble, Ensemble, Leader, Views, Vsn}, _From, State=#state{cluster_state=CS}) ->
+handle_call({update_ensemble, Ensemble, Leader, Views, Vsn}, _From, State = #state{cluster_state = CS}) ->
     case riak_ensemble_state:update_ensemble(Vsn, Ensemble, Leader, Views, CS) of
         error ->
             {reply, error, State};
@@ -358,14 +361,14 @@ handle_call({peer_info, Ensemble, Peer}, From, State) ->
             {reply, undefined, State};
         Pid ->
             spawn_link(fun() ->
-                               try
-                                   Info = riak_ensemble_peer:get_info(Pid),
-                                   gen_server:reply(From, Info)
-                               catch
-                                   _:_ ->
-                                       gen_server:reply(From, undefined)
-                               end
-                       end),
+                try
+                    Info = riak_ensemble_peer:get_info(Pid),
+                    gen_server:reply(From, Info)
+                catch
+                    _:_ ->
+                        gen_server:reply(From, undefined)
+                end
+            end),
             {noreply, State}
     end;
 
@@ -376,7 +379,7 @@ handle_cast({gossip, OtherCS}, State) ->
     NewCS = merge_gossip(OtherCS, State),
     save_state_noreply(NewCS, State);
 
-handle_cast({gossip_pending, Ensemble, Vsn, Views}, State=#state{cluster_state=CS}) ->
+handle_cast({gossip_pending, Ensemble, Vsn, Views}, State = #state{cluster_state = CS}) ->
     case riak_ensemble_state:set_pending(Vsn, Ensemble, Views, CS) of
         error ->
             {noreply, State};
@@ -384,12 +387,12 @@ handle_cast({gossip_pending, Ensemble, Vsn, Views}, State=#state{cluster_state=C
             save_state_noreply(NewCS, State)
     end;
 
-handle_cast({peer_pid, Peer, Pid}, State=#state{remote_peers=Remote}) ->
+handle_cast({peer_pid, Peer, Pid}, State = #state{remote_peers = Remote}) ->
     Remote2 = orddict:store(Peer, Pid, Remote),
     ets:insert(?ETS, {{remote_pid, Peer}, Pid}),
     erlang:monitor(process, Pid),
     %% io:format("Tracking remote peer: ~p :: ~p~n", [Peer, Pid]),
-    {noreply, State#state{remote_peers=Remote2}};
+    {noreply, State#state{remote_peers = Remote2}};
 
 handle_cast({request_peer_pid, From, PeerId}, State) ->
     %% TODO: Confusing that we use {Ensemble, PeerId} as PeerId
@@ -410,23 +413,23 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 save_state_noreply(NewCS, State) ->
-    State2 = State#state{cluster_state=NewCS},
+    State2 = State#state{cluster_state = NewCS},
     case maybe_save_state(State2) of
         ok ->
             State3 = state_changed(State2),
             {noreply, State3};
-        {error,_} ->
+        {error, _} ->
             %% Failed to save, keep original state
             {noreply, State}
     end.
 
 save_state_reply(NewCS, State) ->
-    State2 = State#state{cluster_state=NewCS},
+    State2 = State#state{cluster_state = NewCS},
     case maybe_save_state(State2) of
         ok ->
             State3 = state_changed(State2),
             {reply, ok, State3};
-        {error,_} ->
+        {error, _} ->
             %% Failed to save, keep original state
             {reply, ok, State}
     end.
@@ -444,7 +447,7 @@ handle_info(tick, State) ->
     schedule_tick(),
     {noreply, State2};
 
-handle_info({'DOWN', _, _, Pid, _}, State=#state{remote_peers=Remote}) ->
+handle_info({'DOWN', _, _, Pid, _}, State = #state{remote_peers = Remote}) ->
     ThisNode = node(),
     case node(Pid) of
         ThisNode ->
@@ -455,7 +458,7 @@ handle_info({'DOWN', _, _, Pid, _}, State=#state{remote_peers=Remote}) ->
                 {value, {Peer, _Pid}, Remote2} ->
                     ets:delete(?ETS, {remote_pid, Peer}),
                     %% io:format("Untracking remote peer: ~p :: ~p~n", [Peer, Pid]),
-                    {noreply, State#state{remote_peers=Remote2}};
+                    {noreply, State#state{remote_peers = Remote2}};
                 false ->
                     {noreply, State}
             end
@@ -487,47 +490,47 @@ reload_state() ->
 -spec initial_state() -> state().
 initial_state() ->
     ets:insert(?ETS, {enabled, false}),
-    ClusterName = {node(), erlang:now()},
+    ClusterName = {node(), os:timestamp()},
     CS = riak_ensemble_state:new(ClusterName),
-    State=#state{version=0,
-                 ensemble_data=[],
-                 remote_peers=[],
-                 cluster_state=CS},
+    State = #state{version = 0,
+        ensemble_data = [],
+        remote_peers = [],
+        cluster_state = CS},
     State.
 
 -spec activate(state()) -> {ok, state(), tuple()} | error.
-activate(State=#state{cluster_state=CS}) ->
+activate(State = #state{cluster_state = CS}) ->
     case riak_ensemble_state:enabled(CS) of
         true ->
             error;
         false ->
             RootLeader = {root, node()},
             Members = [RootLeader],
-            Root = #ensemble_info{leader=RootLeader, views=[Members],
-                                  seq={0,0}, vsn={0,0}},
+            Root = #ensemble_info{leader = RootLeader, views = [Members],
+                seq = {0, 0}, vsn = {0, 0}},
             RootInfo = {root, RootLeader, {Root#ensemble_info.vsn,
-                                           Root#ensemble_info.views},
-                        undefined},
+                Root#ensemble_info.views},
+                undefined},
             {ok, CS1} = riak_ensemble_state:enable(CS),
-            {ok, CS2} = riak_ensemble_state:add_member({0,0}, node(), CS1),
+            {ok, CS2} = riak_ensemble_state:add_member({0, 0}, node(), CS1),
             {ok, CS3} = riak_ensemble_state:set_ensemble(root, Root, CS2),
-            State2 = State#state{cluster_state=CS3},
+            State2 = State#state{cluster_state = CS3},
             {ok, State2, RootInfo}
     end.
 
 -spec join_allowed(cluster_state(), cluster_state()) -> true               |
-                                                        remote_not_enabled |
-                                                        already_enabled.
+remote_not_enabled |
+already_enabled.
 join_allowed(LocalCS, RemoteCS) ->
     LocalEnabled = riak_ensemble_state:enabled(LocalCS),
     RemoteEnabled = riak_ensemble_state:enabled(RemoteCS),
     LocalId = riak_ensemble_state:id(LocalCS),
     RemoteId = riak_ensemble_state:id(RemoteCS),
     if not RemoteEnabled ->
-            remote_not_enabled;
-       LocalEnabled and (LocalId =/= RemoteId) ->
+        remote_not_enabled;
+        LocalEnabled and (LocalId =/= RemoteId) ->
             already_enabled;
-       true ->
+        true ->
             true
     end.
 
@@ -536,26 +539,27 @@ load_saved_state() ->
     try
         {ok, CS} = riak_ensemble_storage:get(manager),
         true = riak_ensemble_state:is_state(CS),
-        State = #state{ensemble_data=[],
-                       remote_peers=[],
-                       cluster_state=CS},
+        State = #state{ensemble_data = [],
+            remote_peers = [],
+            cluster_state = CS},
         {ok, State}
     catch
         _:_ ->
             not_found
     end.
 
-maybe_save_state(State=#state{cluster_state=NewCS}) ->
+maybe_save_state(State = #state{cluster_state = NewCS}) ->
     OldState = reload_state(),
     OldCS = OldState#state.cluster_state,
-    if OldCS =:= NewCS ->
+    if
+        OldCS =:= NewCS ->
             ok;
-       true ->
+        true ->
             save_state(State)
     end.
 
 -spec save_state(state()) -> ok | {error, term()}.
-save_state(#state{cluster_state=CS}) ->
+save_state(#state{cluster_state = CS}) ->
     try
         %% Note: not syncing here is an intentional performance decision
         true = riak_ensemble_storage:put(manager, CS),
@@ -579,7 +583,7 @@ tick(State) ->
     State.
 
 -spec send_gossip(state()) -> ok.
-send_gossip(#state{cluster_state=CS}) ->
+send_gossip(#state{cluster_state = CS}) ->
     Members = riak_ensemble_state:members(CS) -- [node()],
     Shuffle = riak_ensemble_util:shuffle(Members),
     Nodes = lists:sublist(Shuffle, 10),
@@ -587,7 +591,7 @@ send_gossip(#state{cluster_state=CS}) ->
     ok.
 
 -spec merge_gossip(cluster_state(), state()) -> cluster_state().
-merge_gossip(OtherCS, #state{cluster_state=CS}) ->
+merge_gossip(OtherCS, #state{cluster_state = CS}) ->
     case CS of
         undefined ->
             OtherCS;
@@ -596,9 +600,9 @@ merge_gossip(OtherCS, #state{cluster_state=CS}) ->
     end.
 
 -spec compute_all_members(Ensemble, Pending, Views) -> [peer_id()] when
-      Ensemble :: ensemble_id(),
-      Pending :: orddict(ensemble_id(), {vsn(), views()}),
-      Views :: views().
+    Ensemble :: ensemble_id(),
+    Pending :: orddict(ensemble_id(), {vsn(), views()}),
+    Views :: views().
 compute_all_members(Ensemble, Pending, Views) ->
     case orddict:find(Ensemble, Pending) of
         {ok, {_, PendingViews}} ->
@@ -608,65 +612,65 @@ compute_all_members(Ensemble, Pending, Views) ->
     end.
 
 -spec state_changed(state()) -> state().
-state_changed(State=#state{ensemble_data=EnsData, cluster_state=CS}) ->
+state_changed(State = #state{ensemble_data = EnsData, cluster_state = CS}) ->
     true = ets:insert(?ETS, {cluster_state, CS}),
     true = ets:insert(?ETS, {cluster, riak_ensemble_state:members(CS)}),
     true = ets:insert(?ETS, {enabled, riak_ensemble_state:enabled(CS)}),
     {NewEnsData, EnsChanges} = check_ensembles(EnsData, CS),
     _ = [case Change of
-             {add, Obj} ->
-                 true = ets:insert(?ETS, Obj);
-             {del, Obj} ->
-                 true = ets:delete(?ETS, Obj);
-             {ins, Obj} ->
-                 true = ets:insert(?ETS, Obj)
-         end || Change <- EnsChanges],
+        {add, Obj} ->
+            true = ets:insert(?ETS, Obj);
+        {del, Obj} ->
+            true = ets:delete(?ETS, Obj);
+        {ins, Obj} ->
+            true = ets:insert(?ETS, Obj)
+    end || Change <- EnsChanges],
     PeerChanges = check_peers(CS),
     _ = [case Change of
-             {add, {Ensemble, Id}, Info} ->
-                 #ensemble_info{mod=Mod, args=Args} = Info,
-                 %% Maybe start new peer
-                 case Mod:ready_to_start() of
-                     true ->
-                         riak_ensemble_peer_sup:start_peer(Mod, Ensemble,
-                                                           Id, Args);
-                     _ ->
-                         ok
-                 end;
-             {del, {Ensemble, Id}} ->
-                 %% Stop running peer
-                 %% io:format("Should stop: ~p~n", [{Ensemble, Id}]),
-                 ok = riak_ensemble_peer_sup:stop_peer(Ensemble, Id)
-         end || Change <- PeerChanges],
-    State#state{ensemble_data=NewEnsData}.
+        {add, {Ensemble, Id}, Info} ->
+            #ensemble_info{mod = Mod, args = Args} = Info,
+            %% Maybe start new peer
+            case Mod:ready_to_start() of
+                true ->
+                    riak_ensemble_peer_sup:start_peer(Mod, Ensemble,
+                        Id, Args);
+                _ ->
+                    ok
+            end;
+        {del, {Ensemble, Id}} ->
+            %% Stop running peer
+            %% io:format("Should stop: ~p~n", [{Ensemble, Id}]),
+            ok = riak_ensemble_peer_sup:stop_peer(Ensemble, Id)
+    end || Change <- PeerChanges],
+    State#state{ensemble_data = NewEnsData}.
 
 -spec request_remote_peers(state()) -> ok.
-request_remote_peers(State=#state{remote_peers=Remote}) ->
+request_remote_peers(State = #state{remote_peers = Remote}) ->
     Root = case rleader() of
-               undefined ->
-                   [];
-               Leader ->
-                   [{root, Leader}]
-           end,
+        undefined ->
+            [];
+        Leader ->
+            [{root, Leader}]
+    end,
     WantedRemote = Root ++ wanted_remote_peers(State),
     Need = ordsets:subtract(ordsets:from_list(WantedRemote),
-                            orddict:fetch_keys(Remote)),
+        orddict:fetch_keys(Remote)),
     _ = [request_peer_pid(Ensemble, Peer) || {Ensemble, Peer} <- Need],
     ok.
 
 -spec wanted_remote_peers(state()) -> [{ensemble_id(), peer_id()}].
-wanted_remote_peers(#state{cluster_state=CS}) ->
+wanted_remote_peers(#state{cluster_state = CS}) ->
     Ensembles = riak_ensemble_state:ensembles(CS),
     Pending = riak_ensemble_state:pending(CS),
     ThisNode = node(),
-    [{Ensemble, Peer} || {Ensemble, #ensemble_info{views=Views}} <- Ensembles,
-                         AllPeers <- [compute_all_members(Ensemble, Pending, Views)],
-                         lists:keymember(ThisNode, 2, AllPeers),
-                         Peer={_, Node} <- AllPeers,
-                         Node =/= ThisNode].
+    [{Ensemble, Peer} || {Ensemble, #ensemble_info{views = Views}} <- Ensembles,
+        AllPeers <- [compute_all_members(Ensemble, Pending, Views)],
+        lists:keymember(ThisNode, 2, AllPeers),
+        Peer = {_, Node} <- AllPeers,
+        Node =/= ThisNode].
 
 -spec request_peer_pid(ensemble_id(), peer_id()) -> ok.
-request_peer_pid(Ensemble, PeerId={_, Node}) ->
+request_peer_pid(Ensemble, PeerId = {_, Node}) ->
     %% io:format("Requesting ~p/~p~n", [Ensemble, PeerId]),
     %% riak_ensemble_util:cast_unreliable({?MODULE, Node},
     %%                                    {request_peer_pid, self(), {Ensemble, PeerId}}).
@@ -679,61 +683,61 @@ compute_members(Views) ->
     lists:usort(lists:append(Views)).
 
 -spec check_ensembles(ensembles(), cluster_state()) -> {ensembles(), Changes} when
-      Changes :: [{add | del | ins, ensemble_data()}].
+    Changes :: [{add | del | ins, ensemble_data()}].
 check_ensembles(EnsData, CS) ->
     NewEnsData = ensemble_data(CS),
     Delta = riak_ensemble_util:orddict_delta(EnsData, NewEnsData),
     Changes =
         [case Change of
-             {'$none', Obj} ->
-                 {add, Obj};
-             {Obj, '$none'} ->
-                 {del, Obj};
-             {_, Obj} ->
-                 {ins, Obj}
-         end || {_Ensemble, Change} <- Delta],
+            {'$none', Obj} ->
+                {add, Obj};
+            {Obj, '$none'} ->
+                {del, Obj};
+            {_, Obj} ->
+                {ins, Obj}
+        end || {_Ensemble, Change} <- Delta],
     {NewEnsData, Changes}.
 
 -spec check_peers(cluster_state()) -> [Change] when
-      Change :: {add, {ensemble_id(), peer_id()}, ensemble_info()}
-              | {del, {ensemble_id(), peer_id()}}.
+    Change :: {add, {ensemble_id(), peer_id()}, ensemble_info()}
+    | {del, {ensemble_id(), peer_id()}}.
 check_peers(CS) ->
     Peers = orddict_from_list(riak_ensemble_peer_sup:peers()),
     NewPeers = wanted_peers(CS),
     Delta = orddict_from_list(riak_ensemble_util:orddict_delta(Peers, NewPeers)),
     Changes =
         [case Change of
-             {'$none', Info} ->
-                 {add, PeerId, Info};
-             {_Pid, '$none'} ->
-                 {del, PeerId};
-             _ ->
-                 nothing
-         end || {PeerId, Change} <- Delta],
+            {'$none', Info} ->
+                {add, PeerId, Info};
+            {_Pid, '$none'} ->
+                {del, PeerId};
+            _ ->
+                nothing
+        end || {PeerId, Change} <- Delta],
     Changes2 = [Change || Change <- Changes,
-                          Change =/= nothing],
+        Change =/= nothing],
     Changes2.
 
 -spec ensemble_data(cluster_state()) -> ensembles().
 ensemble_data(CS) ->
     Ensembles = riak_ensemble_state:ensembles(CS),
     Pending = riak_ensemble_state:pending(CS),
-    Data = [{Ensemble, {Ensemble, Leader, {Vsn,Views}, pending(Ensemble, Pending)}}
-            || {Ensemble, #ensemble_info{leader=Leader, views=Views, vsn=Vsn}} <- Ensembles],
+    Data = [{Ensemble, {Ensemble, Leader, {Vsn, Views}, pending(Ensemble, Pending)}}
+        || {Ensemble, #ensemble_info{leader = Leader, views = Views, vsn = Vsn}} <- Ensembles],
     orddict_from_list(Data).
 
 -spec wanted_peers(cluster_state()) -> orddict(Peer, Info) when
-      Peer :: {ensemble_id(), peer_id()},
-      Info :: ensemble_info().
+    Peer :: {ensemble_id(), peer_id()},
+    Info :: ensemble_info().
 wanted_peers(CS) ->
     Ensembles = riak_ensemble_state:ensembles(CS),
     Pending = riak_ensemble_state:pending(CS),
     ThisNode = node(),
     Wanted = [{{Ensemble, PeerId}, Info}
-              || {Ensemble, Info=#ensemble_info{views=EViews}} <- Ensembles,
-                 EPeers <- [compute_all_members(Ensemble, Pending, EViews)],
-                 PeerId={_, Node} <- EPeers,
-                 Node =:= ThisNode],
+        || {Ensemble, Info = #ensemble_info{views = EViews}} <- Ensembles,
+        EPeers <- [compute_all_members(Ensemble, Pending, EViews)],
+        PeerId = {_, Node} <- EPeers,
+        Node =:= ThisNode],
     orddict_from_list(Wanted).
 
 %% Optimized version of orddict:from_list.

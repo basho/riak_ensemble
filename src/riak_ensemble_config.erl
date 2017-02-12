@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2014 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2014-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -17,8 +17,30 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+
 -module(riak_ensemble_config).
--compile(export_all).
+
+-export([
+    alive_ticks/0,
+    election_timeout/0,
+    follower_timeout/0,
+    get_env/2,
+    lease/0,
+    local_get_timeout/0,
+    local_put_timeout/0,
+    notfound_read_delay/0,
+    peer_workers/0,
+    pending_timeout/0,
+    prefollow_timeout/0,
+    probe_delay/0,
+    storage_delay/0,
+    storage_tick/0,
+    synchronous_tree_updates/0,
+    tick/0,
+    tree_validation/0,
+    trust_lease/0
+]).
+
 -include_lib("riak_ensemble_types.hrl").
 
 %% @doc
@@ -51,7 +73,7 @@ follower_timeout() ->
 %% The election timeout used for randomized election.
 election_timeout() ->
     Timeout = follower_timeout(),
-    Timeout + random:uniform(Timeout).
+    Timeout + riak_ensemble_util:rand_uniform(Timeout).
 
 %% @doc
 %% The prefollow timeout determines how long a peer waits to hear from the

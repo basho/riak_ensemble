@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -17,24 +17,34 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+
 -module(riak_ensemble_exchange).
--compile(export_all).
+
+-export([
+    all_trust_majority/3,
+    exchange/5,
+    exchange_get/4,
+    perform_exchange/7,
+    perform_exchange2/5,
+    start_exchange/7,
+    trust_majority/4
+]).
 
 start_exchange(Ensemble, Peer, Id, Tree, Peers, Views, Trusted) ->
     spawn(fun() ->
-                  try
-                      perform_exchange(Ensemble, Peer, Id, Tree, Peers, Views, Trusted)
-                  catch Class:Reason ->
-                          io:format("CAUGHT: ~p/~p~n~p~n", [Class, Reason, erlang:get_stacktrace()]),
-                          gen_fsm:send_event(Peer, exchange_failed)
-                  end
-          end).
+        try
+            perform_exchange(Ensemble, Peer, Id, Tree, Peers, Views, Trusted)
+        catch _Class:_Reason ->
+            %% io:format(user, "CAUGHT: ~p/~p~n~p~n", [Class, Reason, erlang:get_stacktrace()]),
+            gen_fsm:send_event(Peer, exchange_failed)
+        end
+    end).
 
 perform_exchange(Ensemble, Peer, Id, Tree, Peers, Views, Trusted) ->
     Required = case Trusted of
-                   true  -> quorum;
-                   false -> other
-               end,
+        true -> quorum;
+        false -> other
+    end,
     RemotePeers =
         case trust_majority(Id, Peers, Views, Required) of
             {ok, Quorum} ->
@@ -66,35 +76,35 @@ perform_exchange2(Ensemble, Peer, Id, Tree, RemotePeers) ->
 
 exchange(_Ensemble, Peer, _Id, _Tree, []) ->
     gen_fsm:send_event(Peer, exchange_complete);
-exchange(Ensemble, Peer, Id, Tree, [RemotePeer|RemotePeers]) ->
+exchange(Ensemble, Peer, Id, Tree, [RemotePeer | RemotePeers]) ->
     RemotePid = riak_ensemble_manager:get_peer_pid(Ensemble, RemotePeer),
     RemoteTree = gen_fsm:sync_send_event(RemotePid, tree_pid, infinity),
-    Local = fun(exchange_get, {L,B}) ->
-                    exchange_get(L, B, Peer, Tree);
-               (start_exchange_level, _) ->
-                    ok
-            end,
-    Remote = fun(exchange_get, {L,B}) ->
-                     exchange_get(L, B, RemotePid, RemoteTree);
-                (start_exchange_level, _) ->
-                     ok
-             end,
+    Local = fun(exchange_get, {L, B}) ->
+        exchange_get(L, B, Peer, Tree);
+        (start_exchange_level, _) ->
+            ok
+    end,
+    Remote = fun(exchange_get, {L, B}) ->
+        exchange_get(L, B, RemotePid, RemoteTree);
+        (start_exchange_level, _) ->
+            ok
+    end,
     Height = riak_ensemble_peer_tree:height(Tree),
     Result = synctree:compare(Height, Local, Remote),
     %% io:format("~p: Result: ~p~n", [Id, Result]),
     _ = [case Diff of
-             {Key, {'$none', B}} ->
-                 riak_ensemble_peer_tree:insert(Key, B, Tree);
-             {_Key, {_, '$none'}}  ->
-                 ok;
-             {Key, {A,B}} ->
-                 case riak_ensemble_peer:valid_obj_hash(B, A) of
-                     true ->
-                         riak_ensemble_peer_tree:insert(Key, B, Tree);
-                     false ->
-                         ok
-                 end
-         end || Diff <- Result],
+        {Key, {'$none', B}} ->
+            riak_ensemble_peer_tree:insert(Key, B, Tree);
+        {_Key, {_, '$none'}} ->
+            ok;
+        {Key, {A, B}} ->
+            case riak_ensemble_peer:valid_obj_hash(B, A) of
+                true ->
+                    riak_ensemble_peer_tree:insert(Key, B, Tree);
+                false ->
+                    ok
+            end
+    end || Diff <- Result],
     exchange(Ensemble, Peer, Id, Tree, RemotePeers).
 
 exchange_get(L, B, PeerPid, Tree) ->
@@ -108,38 +118,38 @@ exchange_get(L, B, PeerPid, Tree) ->
 
 trust_majority(Id, Peers, Views, Required) ->
     X = riak_ensemble_msg:blocking_send_all(exchange, Id, Peers,
-                                            Views, Required),
+        Views, Required),
     {Future, _} = X,
     Parent = self(),
     spawn_link(fun() ->
-                       Result = case riak_ensemble_msg:wait_for_quorum(Future) of
-                                    {quorum_met, Replies} ->
-                                        {ok, [Peer || {Peer,_} <- Replies]};
-                                    {timeout, _Replies} ->
-                                        failed
-                                end,
-                       %% io:format(user, "trust majority: ~p~n", [Result]),
-                       Parent ! {trust, Result}
-               end),
+        Result = case riak_ensemble_msg:wait_for_quorum(Future) of
+            {quorum_met, Replies} ->
+                {ok, [Peer || {Peer, _} <- Replies]};
+            {timeout, _Replies} ->
+                failed
+        end,
+        %% io:format(user, "trust majority: ~p~n", [Result]),
+        Parent ! {trust, Result}
+    end),
     receive {trust, Trusted} ->
-            Trusted
+        Trusted
     end.
 
 all_trust_majority(Id, Peers, Views) ->
     X = riak_ensemble_msg:blocking_send_all(all_exchange, Id, Peers,
-                                            Views, all),
+        Views, all),
     {Future, _} = X,
     Parent = self(),
     spawn_link(fun() ->
-                       Result = case riak_ensemble_msg:wait_for_quorum(Future) of
-                                    {quorum_met, Replies} ->
-                                        {ok, [Peer || {Peer,_} <- Replies]};
-                                    {timeout, _Replies} ->
-                                        failed
-                                end,
-                       %% io:format(user, "all_trust majority: ~p~n", [Result]),
-                       Parent ! {trust, Result}
-               end),
+        Result = case riak_ensemble_msg:wait_for_quorum(Future) of
+            {quorum_met, Replies} ->
+                {ok, [Peer || {Peer, _} <- Replies]};
+            {timeout, _Replies} ->
+                failed
+        end,
+        %% io:format(user, "all_trust majority: ~p~n", [Result]),
+        Parent ! {trust, Result}
+    end),
     receive {trust, Trusted} ->
-            Trusted
+        Trusted
     end.

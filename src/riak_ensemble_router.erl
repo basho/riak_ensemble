@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -41,19 +41,38 @@
 %% of `gen_fsm:send_sync_event' that converts timeouts into error tuples
 %% rather than exit conditions, as well as discarding late/delayed messages.
 %% This isolation is provided by spawning an intermediary proxy process.
-
 -module(riak_ensemble_router).
--compile(export_all).
+
 -behaviour(gen_server).
 
 -include_lib("riak_ensemble_types.hrl").
 
 %% API
--export([start_link/1]).
+-export([
+    cast/2,
+    cast/3,
+    routers/0,
+    start_link/1,
+
+    sync_send_event/3,
+    sync_send_event/4
+]).
+
+%% Spawned proxy processes
+-export([
+    ping_proxy/1,
+    sync_proxy/6
+]).
 
 %% gen_server callbacks
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3]).
+-export([
+    init/1,
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
+]).
 
 -record(state, {}).
 
@@ -78,11 +97,12 @@ sync_send_event(_Node, Target, _Event, infinity) when not is_pid(Target) ->
     throw("infinity timeout not currently safe for non-pid target");
 sync_send_event(Node, Target, Event, Timeout) ->
     Ref = make_ref(),
-    spawn_link(?MODULE, sync_proxy, [self(), Ref, Node, Target, Event, Timeout]),
-    receive
-        {Ref, nack} ->
+    _ = spawn_link(?MODULE, sync_proxy, [self(), Ref, Node, Target, Event, Timeout]),
+    Result = receive {Ref, Ret} -> Ret end,
+    case Result of
+        nack ->
             timeout;
-        {Ref, Result} ->
+        _ ->
             Result
     end.
 
@@ -106,13 +126,14 @@ sync_proxy_direct(From, Ref, Pid, Event, Timeout) ->
 
 -spec sync_proxy_router(pid(), reference(), node(), ensemble_id(), msg(), timeout()) -> ok.
 sync_proxy_router(From, Ref, Node, Target, Event, Timeout) ->
-    case riak_ensemble_router:cast(Node, Target, {sync_send_event, self(), Ref, Event, Timeout}) of
+    case cast(Node, Target, {sync_send_event, self(), Ref, Event, Timeout}) of
         ok ->
             receive
-                {Ref, _}=Reply ->
+                {Ref, _} = Reply ->
                     From ! Reply,
                     ok
-            after Timeout ->
+            after
+                Timeout ->
                     From ! {Ref, timeout},
                     ok
             end;
@@ -126,35 +147,19 @@ cast(Ensemble, Msg) ->
     ensemble_cast(Ensemble, Msg).
 
 -spec cast(node(), ensemble_id(), msg()) -> error | ok.
-cast(Node, Ensemble, Msg) when Node =:= node() ->
-    cast(Ensemble, Msg);
+cast(Node, Ensemble, Msg) when Node =:= erlang:node() ->
+    ensemble_cast(Ensemble, Msg);
 cast(Node, Ensemble, Msg) ->
-    NumRouters = tuple_size(routers()),
-    Pick = random(NumRouters),
-    Router = element(Pick + 1, routers()),
-    %% gen_server:cast({Router, Node}, {ensemble_cast, Ensemble, Msg}).
-    case noconnect_cast({Router, Node}, {ensemble_cast, Ensemble, Msg}) of
+    Routers = routers(),
+    Router = erlang:element(
+        riak_ensemble_util:rand_uniform(erlang:tuple_size(Routers)), Routers),
+    Dest = {Router, Node},
+    Cast = {ensemble_cast, Ensemble, Msg},
+    %% gen_server:cast(Dest, Cast).
+    case noconnect_cast(Dest, Cast) of
         nodedown ->
             _ = fail_cast(Msg),
             ok;
-        ok ->
-            ok
-    end.
-
-noconnect_cast(Dest, Msg) ->
-    case catch erlang:send(Dest, {'$gen_cast', Msg}, [noconnect]) of
-	noconnect ->
-            spawn(fun() ->
-                          case Dest of
-                              {_, Node} ->
-                                  net_adm:ping(Node);
-                              Pid when is_pid(Pid) ->
-                                  net_adm:ping(node(Pid));
-                              _ ->
-                                  ok
-                          end
-                  end),
-            nodedown;
         _ ->
             ok
     end.
@@ -168,21 +173,6 @@ routers() ->
      riak_ensemble_router_5,
      riak_ensemble_router_6,
      riak_ensemble_router_7}.
-
-%% @doc Generate "random" number X, such that `0 <= X < N'.
--spec random(pos_integer()) -> pos_integer().
-random(N) ->
-    %% Note: hashing over I/O statistics seems to be fastest option when
-    %%       benchmarking with lots of concurrent processes. Inside BEAM,
-    %%       querying I/O statistics corresponds to two atomic reads.
-    %%
-    %% random:uniform_s(os:timestamp()),
-    %% crypto:rand_uniform(0, NumRouters),
-    %% element(3, os:timestamp()) rem N.
-    %% erlang:phash2(make_ref(), N).
-    %% erlang:phash2(erlang:statistics(context_switches), N).
-    %% erlang:phash2(erlang:statistics(garbage_collection), NumRouters),
-    erlang:phash2(erlang:statistics(io), N).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -213,37 +203,53 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
+-spec noconnect_cast(pid() | atom() | {atom(), node()}, term()) -> ok | nodedown.
+noconnect_cast(Dest, Msg) ->
+    case catch erlang:send(Dest, {'$gen_cast', Msg}, [noconnect]) of
+        noconnect ->
+            % This can only happen when Dest represents a process on another
+            % node, as either a Pid or a Name/Node tuple.
+            _ = spawn(?MODULE, ping_proxy, [Dest]),
+            nodedown;
+        _ ->
+            ok
+    end.
+
+-spec ping_proxy(pid() | atom() | {atom(), node()}) -> ok.
+ping_proxy({Name, Node}) when erlang:is_atom(Name) andalso erlang:is_atom(Node) ->
+    net_adm:ping(Node);
+ping_proxy(Pid) when erlang:is_pid(Pid) ->
+    net_adm:ping(erlang:node(Pid));
+ping_proxy(_) ->
+    ok.
+
 -spec ensemble_cast(ensemble_id(), msg()) -> error | ok.
 ensemble_cast(Ensemble, Msg) ->
     case riak_ensemble_manager:get_leader(Ensemble) of
-        {_, Node}=Leader ->
-            %% io:format("L: ~p~n", [Leader]),
-            if Node =:= node() ->
-                    Pid = riak_ensemble_manager:get_peer_pid(Ensemble, Leader),
-                    %% io:format("Sending to ~p~n", [Pid]),
-                    handle_ensemble_cast(Msg, Pid),
-                    ok;
-               true ->
-                    riak_ensemble_router:cast(Node, Ensemble, Msg),
-                    ok
-            end;
+        {_, Node} = Leader when Node =:= erlang:node() ->
+            Pid = riak_ensemble_manager:get_peer_pid(Ensemble, Leader),
+            handle_ensemble_cast(Msg, Pid);
+        {_, Node} ->
+            riak_ensemble_router:cast(Node, Ensemble, Msg),
+            ok;
         undefined ->
             error
     end.
 
--spec handle_ensemble_cast(_,_) -> ok.
+-spec handle_ensemble_cast(_, _) -> ok.
 handle_ensemble_cast({sync_send_event, From, Ref, Event, Timeout}, Pid) ->
-    spawn(fun() ->
-                  try
-                      Result = gen_fsm:sync_send_event(Pid, Event, Timeout),
-                      From ! {Ref, Result}
-                  catch
-                      _:_ ->
-                          From ! {Ref, timeout}
-                  end
-          end),
+    Fun = fun() ->
+        Result = case (catch gen_fsm:sync_send_event(Pid, Event, Timeout)) of
+            {'EXIT', _} ->
+                timeout;
+            Ret ->
+                Ret
+        end,
+        From ! {Ref, Result}
+    end,
+    _ = spawn(Fun),
     ok;
-handle_ensemble_cast(_, _Pid) ->
+handle_ensemble_cast(_Msg, _Pid) ->
     ok.
 
 fail_cast({sync_send_event, From, Ref, _Event, _Timeout}) ->

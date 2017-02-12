@@ -1,9 +1,33 @@
+%% -------------------------------------------------------------------
+%%
+%% Copyright (c) 2016-2017 Basho Technologies, Inc.
+%%
+%% This file is provided to you under the Apache License,
+%% Version 2.0 (the "License"); you may not use this file
+%% except in compliance with the License.  You may obtain
+%% a copy of the License at
+%%
+%%   http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing,
+%% software distributed under the License is distributed on an
+%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%% KIND, either express or implied.  See the License for the
+%% specific language governing permissions and limitations
+%% under the License.
+%%
+%% -------------------------------------------------------------------
+
 -module(leadership_watchers).
--compile(export_all).
+
 -include_lib("eunit/include/eunit.hrl").
 
+-define(DBG(Msg),   ok).
+% -define(DBG(Msg),   io:format(user, "~b ", [?LINE])).
+% -define(DBG(Msg),   ?debugMsg(Msg)).
+
 run_test_() ->
-    ens_test:run(fun scenario/0, 40).
+    ens_test:run(fun scenario/0).
 
 scenario() ->
     ens_test:start(3),
@@ -12,34 +36,34 @@ scenario() ->
     Pid = riak_ensemble_manager:get_leader_pid(root),
 
     ?assertEqual(0, length(riak_ensemble_peer:get_watchers(Pid))),
-    ?debugMsg("Watching leader"),
+    ?DBG("Watching leader"),
     riak_ensemble_peer:watch_leader_status(Pid),
     ?assertEqual(1, length(riak_ensemble_peer:get_watchers(Pid))),
-    ?debugMsg("Waiting for is_leading notification"),
+    ?DBG("Waiting for is_leading notification"),
     wait_status(is_leading, Pid),
 
-    ?debugMsg("Stopping watching leader"),
+    ?DBG("Stopping watching leader"),
     riak_ensemble_peer:stop_watching(Pid),
     ?assertEqual(0, length(riak_ensemble_peer:get_watchers(Pid))),
 
-    ?debugMsg("Starting watching leader again"),
+    ?DBG("Starting watching leader again"),
     riak_ensemble_peer:watch_leader_status(Pid),
     ?assertEqual(1, length(riak_ensemble_peer:get_watchers(Pid))),
     wait_status(is_leading, Pid),
 
-    ?debugMsg("Suspending leader, and waiting for new leader to be elected"),
+    ?DBG("Suspending leader, and waiting for new leader to be elected"),
     erlang:suspend_process(Pid),
     ens_test:wait_stable(root),
 
-    ?debugMsg("Resuming former leader, and waiting for is_not_leading notification"),
+    ?DBG("Resuming former leader, and waiting for is_not_leading notification"),
     erlang:resume_process(Pid),
     wait_status(is_not_leading, Pid),
 
-    ?debugMsg("Watching leader in external process"),
+    ?DBG("Watching leader in external process"),
     Watcher = spawn_link(fun() -> watcher(Pid) end),
     wait_until_n_watchers(2, Pid),
 
-    ?debugMsg("Killing external watcher process and checking peer state"),
+    ?DBG("Killing external watcher process and checking peer state"),
     Watcher ! die,
     wait_until_n_watchers(1, Pid).
 

@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -18,15 +18,13 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc
-%% Implementation of the {@link riak_ensemble_backend} behavior that
-%% that stores simple key/value objects in an in-process orddict that
-%% is synchronously written to disk on each put.
+%% @doc Implementation of the {@link riak_ensemble_backend} behavior that
+%%      stores simple key/value objects in an in-process orddict that is
+%%      synchronously written to disk on each put.
 %%
 %% Note: this is used as the peer type for the built-in root ensemble
 %% that stores system-wide metadata, bootstraps additional ensembles,
 %% etc.
-
 -module(riak_ensemble_basic_backend).
 -behaviour(riak_ensemble_backend).
 
@@ -36,6 +34,11 @@
 -export([get/3, put/4, tick/5, ping/2, ready_to_start/0]).
 -export([synctree_path/2]).
 -export([handle_down/4]).
+
+-ifdef(TEST).
+%% For unit tests to look inside records.
+-export([state_fields/0]).
+-endif.
 
 -include_lib("riak_ensemble_types.hrl").
 
@@ -59,7 +62,7 @@
 init(Ensemble, Id, []) ->
     %% TODO: Any concerns about using hash here?
     %% TODO: For root ensemble, should we use different naming scheme?
-    <<Hash:160/integer>> = riak_ensemble_util:sha(term_to_binary({Ensemble, Id})),
+    <<Hash:160/integer>> = crypto:hash(sha, term_to_binary({Ensemble, Id})),
     Name = integer_to_list(Hash),
     {ok, Root} = application:get_env(riak_ensemble, data_root),
     File = filename:join([Root, "ensembles", Name ++ "_kv"]),
@@ -167,8 +170,8 @@ load_saved_data(File) ->
                         {ok, binary_to_term(Binary)}
                     catch
                         _:_ ->
-                            lager:warning("Corrupted state detected. "
-                                          "Reverting to empty state."),
+                            _ = lager:warning(
+                                "Corrupted state detected. Reverting to empty state."),
                             not_found
                     end;
                 _ ->
@@ -185,3 +188,15 @@ save_data(File, Data) ->
     ok = filelib:ensure_dir(File),
     ok = riak_ensemble_util:replace_file(File, [<<CRC:32/integer>>, Binary]),
     ok.
+
+%% ===================================================================
+%% Test Helpers
+%% ===================================================================
+-ifdef(TEST).
+
+-spec state_fields() -> [{atom(), pos_integer()}].
+state_fields() ->
+    Fields = record_info(fields, state),
+    lists:zip(Fields, lists:seq(2, (erlang:length(Fields) + 1))).
+
+-endif. % TEST

@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -33,6 +33,9 @@
          quorum_timeout/1,
          reply/3]).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
 -include_lib("riak_ensemble_types.hrl").
 
 %% -define(OUT(Fmt,Args), io:format(Fmt,Args)).
@@ -42,12 +45,14 @@
 
 -type required()   :: quorum | other | all | all_or_quorum.
 
--record(msgstate, {awaiting = undefined :: 'undefined' | reqid(),
-                   timer    = undefined :: 'undefined' | reference(),
-                   required = quorum    :: required(),
-                   id       :: peer_id(),
-                   views    = [] :: views(),
-                   replies  = [] :: [{peer_id(), any()}]}).
+-record(msgstate, {
+    awaiting  = undefined :: 'undefined' | reqid(),
+    timer     = undefined :: 'undefined' | reference(),
+    required  = quorum    :: required(),
+    id        = undefined :: 'undefined' | peer_id(),
+    views     = undefined :: 'undefined' | views(),
+    replies   = undefined :: 'undefined' | [{peer_id(), any()}]
+}).
 
 -opaque msg_state() :: #msgstate{}.
 -export_type([msg_state/0]).
@@ -66,7 +71,7 @@
 -type extra_check() :: undefined | fun(([peer_reply()]) -> boolean()).
 -export_type([extra_check/0]).
 
--record(collect, {replies  :: [peer_reply()], 
+-record(collect, {replies  :: [peer_reply()],
                   parent   :: maybe_from(),
                   id       :: peer_id(),
                   views    :: views(),
@@ -114,8 +119,7 @@ maybe_send_request(Id, {PeerId, PeerPid}, ReqId, Event) ->
     case riak_ensemble_test:maybe_drop(Id, PeerId) of
         true ->
             %% TODO: Consider nacking instead
-            io:format("Dropping ~p -> ~p~n", [Id, PeerId]),
-            ok;
+            ?debugFmt("Dropping ~p -> ~p~n", [Id, PeerId]);
         false ->
             send_request({PeerId, PeerPid}, ReqId, Event)
     end.
@@ -150,8 +154,7 @@ maybe_send_cast(Id, {PeerId, PeerPid}, Event) ->
     case riak_ensemble_test:maybe_drop(Id, PeerId) of
         true ->
             %% TODO: Consider nacking instead
-            io:format("Dropping ~p -> ~p~n", [Id, PeerId]),
-            ok;
+            ?debugFmt("Dropping ~p -> ~p~n", [Id, PeerId]);
         false ->
             send_cast({PeerId, PeerPid}, Event)
     end.

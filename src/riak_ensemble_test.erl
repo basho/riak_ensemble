@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -17,17 +17,30 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
--module(riak_ensemble_test).
--compile(export_all).
 
--define(ETS_TEST, riak_ensemble_test).
+-module(riak_ensemble_test).
+
+-export([
+    maybe_drop/2,
+    setup/0
+]).
 
 -ifdef(TEST).
 
+-define(ETS_TEST, riak_ensemble_test).
+
 setup() ->
-    _ = ets:new(?ETS_TEST, [public, named_table, {read_concurrency, true},
-                            {write_concurrency, true}]),
-    ok.
+    case ets:info(?ETS_TEST, named_table) of
+        undefined ->
+            _ = ets:new(?ETS_TEST, [
+                public, named_table,
+                {read_concurrency, true},
+                {write_concurrency, true}
+            ]),
+            ok;
+        _ ->
+            ok
+    end.
 
 maybe_drop(Id, PeerId) ->
     case catch ets:member(?ETS_TEST, {drop, {Id, PeerId}}) of
@@ -37,7 +50,7 @@ maybe_drop(Id, PeerId) ->
             false
     end.
 
--else.
+-else.  % not TEST
 
 setup() ->
     ok.
@@ -45,4 +58,4 @@ setup() ->
 maybe_drop(_, _) ->
     false.
 
--endif.
+-endif. % TEST

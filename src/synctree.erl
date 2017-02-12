@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2014 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2014-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -82,8 +82,21 @@
 -export([rehash_upper/1, rehash/1]).
 -export([verify_upper/1, verify/1]).
 
-%% TODO: Should we eeally exporting these directly?
+%% TODO: Should we really exporting these directly?
 -export([m_batch/2, m_flush/1]).
+
+-ifdef(TEST).
+%% For unit tests to look inside records.
+-export([state_fields/0]).
+-endif.
+
+%% Unit tests need to intercept this, so call through the module.
+-ifdef(TEST).
+-export([m_store/2]).
+-define(M_STORE(U, T), ?MODULE:m_store(U, T)).
+-else.
+-define(M_STORE(U, T), m_store(U, T)).
+-endif.
 
 -define(WIDTH, 16).
 -define(SEGMENTS, 1024*1024).
@@ -100,20 +113,21 @@
 
 -type corrupted() :: {corrupted, level(), bucket()}.
 
--record(tree, {id        :: term(),
-               width     :: pos_integer(),
-               segments  :: pos_integer(),
-               height    :: pos_integer(),
-               shift     :: pos_integer(),
-               shift_max :: pos_integer(),
-               top_hash  :: hash(),
-               buffer    :: [action()],
-               buffered  :: non_neg_integer(),
-               mod       :: module(),
-               modstate  :: any()
-              }).
-
+-record(tree, {
+    id          :: term(),
+    width       :: pos_integer(),
+    segments    :: pos_integer(),
+    height      :: pos_integer(),
+    shift       :: pos_integer(),
+    shift_max   :: pos_integer(),
+    top_hash    :: undefined | hash(),
+    buffer      :: [action()],
+    buffered    :: non_neg_integer(),
+    mod         :: module(),
+    modstate    :: any()
+}).
 -type tree() :: #tree{}.
+
 -type maybe_integer() :: pos_integer() | default.
 -type options() :: proplists:proplist().
 
@@ -194,7 +208,7 @@ insert(Key, Value, Tree) when is_binary(Value) ->
             Error;
         Path ->
             {TopHash, Updates} = update_path(Path, Key, Value, []),
-            Tree2 = m_store(Updates, Tree),
+            Tree2 = ?M_STORE(Updates, Tree),
             Tree2#tree{top_hash=TopHash}
     end.
 
@@ -311,7 +325,7 @@ get_path(N, Level, Shift, Segment, UpHashes, Tree, Acc) ->
     Verify = verify_hash(Expected, Hashes),
     case {Verify, N} of
         {false, _} ->
-            lager:warning("Corrupted at ~p/~p~n", [Level, Bucket]),
+            _ = lager:warning("Corrupted at ~p/~p~n", [Level, Bucket]),
             {corrupted, Level, Bucket};
         {_, 0} ->
             Acc2;
@@ -354,7 +368,7 @@ orddict_find(Key, Default, L) ->
 direct_exchange(Tree=#tree{}) ->
     fun(exchange_get, {Level, Bucket}) ->
             exchange_get(Level, Bucket, Tree);
-       (start_exchange_level, {_Level, _Buckets}) -> 
+       (start_exchange_level, {_Level, _Buckets}) ->
            ok
     end.
 
@@ -481,7 +495,7 @@ maybe_flush_buffer(Tree=#tree{buffered=Buffered}) ->
 
 m_flush(Tree=#tree{buffer=Buffer}) ->
     Updates = lists:reverse(Buffer),
-    Tree2 = m_store(Updates, Tree),
+    Tree2 = ?M_STORE(Updates, Tree),
     Tree2#tree{buffer=[], buffered=0}.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -569,3 +583,15 @@ verify(Level, MaxDepth, Bucket, UpHash, Tree) ->
                               verify(Level + 1, MaxDepth, Child, ChildHash, Tree)
                       end, Hashes)
     end.
+
+%% ===================================================================
+%% Test Helpers
+%% ===================================================================
+-ifdef(TEST).
+
+-spec state_fields() -> [{atom(), pos_integer()}].
+state_fields() ->
+    Fields = record_info(fields, tree),
+    lists:zip(Fields, lists:seq(2, (erlang:length(Fields) + 1))).
+
+-endif. % TEST
