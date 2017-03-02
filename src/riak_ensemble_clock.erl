@@ -80,7 +80,7 @@ init_nif_lib() ->
         true ->
             ok; % Don't need the NIF library.
         _ ->
-            SoDir = case code:priv_dir(riak_ensemble) of
+            SoDir = case code:priv_dir(?APPLICATION) of
                 {error, bad_name} ->
                     ADir =  case code:which(?MODULE) of
                         Beam when is_list(Beam) ->
@@ -95,10 +95,6 @@ init_nif_lib() ->
                 PDir ->
                     PDir
             end,
-            {_, Sys} = os:type(),
-            Arch = erlang:hd(string:tokens(
-                erlang:system_info(system_architecture), "-")),
-            SoName = io_lib:format("~s_~s_~s", [?APPLICATION, Sys, Arch]),
             AppEnv = application:get_all_env(?APPLICATION),
-            erlang:load_nif(filename:join(SoDir, SoName), AppEnv)
+            erlang:load_nif(filename:join(SoDir, ?APPLICATION), AppEnv)
     end.
