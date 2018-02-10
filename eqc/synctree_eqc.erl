@@ -1,19 +1,10 @@
 %% Port of EQC test from riak_core/hashtree.erl
 
 -module(synctree_eqc).
--compile(export_all).
+-export([prop_correct/0]).
 
--ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eunit/include/eunit.hrl").
-
-eqc_test_() ->
-    {spawn,
-     {timeout, 120,
-      fun() ->
-              ?assert(eqc:quickcheck(eqc:testing_time(4, prop_correct())))
-      end
-     }}.
 
 bin(X) ->
     list_to_binary(integer_to_list(X)).
@@ -106,5 +97,3 @@ compare(T1, T2) ->
          {Key, {_, _}} ->
              {different, Key}
      end || Delta <- KeyDiff].
-
--endif.

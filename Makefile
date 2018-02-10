@@ -1,39 +1,22 @@
-DIALYZER_APPS=erts kernel stdlib crypto
-DIALYZER_FLAGS ?= -Wunmatched_returns -Werror_handling -Wrace_conditions
+.PHONY: compile rel cover test dialyzer
+REBAR=./rebar3
 
-.PHONY: all compile clean deps test dialyzer typer
-
-all: deps compile
+compile:
+	$(REBAR) compile
 
 clean:
 	$(REBAR) clean
 
-deps:
-	$(REBAR) get-deps
-	$(REBAR) compile
+cover: test
+	$(REBAR) cover
 
-compile:
-	$(REBAR) skip_deps=true compile
+test: compile
+	$(REBAR) as test do eunit
 
-testdeps: deps
-	$(REBAR) -C rebar.test.config get-deps
-	$(REBAR) -C rebar.test.config compile
+dialyzer:
+	$(REBAR) dialyzer
 
-runtests: testdeps compile
-	bash test/run.sh
+xref:
+	$(REBAR) xref
 
-update-doc-lines:
-	@escript doc/update_line_numbers.erl ebin doc/*.md
-
-typer:
-	typer --plt $(DEPS_PLT) -I include -r ./src
-
-include tools.mk
-
-ifeq ($(REBAR),)
-$(error "Rebar not found. Please set REBAR variable or update PATH")
-endif
-
-## Override test after tools.mk; use custom test runner for isolation.
-test: testdeps
-	bash test/run.sh
+check: test dialyzer xref
