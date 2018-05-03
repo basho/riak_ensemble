@@ -21,6 +21,7 @@
 -export([start_exchange/7, perform_exchange/7, perform_exchange2/5, exchange/5,
           exchange_get/4, trust_majority/4, all_trust_majority/3]).
 
+-ifndef('21.0').
 start_exchange(Ensemble, Peer, Id, Tree, Peers, Views, Trusted) ->
     spawn(fun() ->
                   try
@@ -30,7 +31,17 @@ start_exchange(Ensemble, Peer, Id, Tree, Peers, Views, Trusted) ->
                           gen_fsm_compat:send_event(Peer, exchange_failed)
                   end
           end).
-
+-else.
+start_exchange(Ensemble, Peer, Id, Tree, Peers, Views, Trusted) ->
+    spawn(fun() ->
+                  try
+                      perform_exchange(Ensemble, Peer, Id, Tree, Peers, Views, Trusted)
+                  catch Class:Reason:Stack ->
+                          io:format("CAUGHT: ~p/~p~n~p~n", [Class, Reason, Stack]),
+                          gen_fsm_compat:send_event(Peer, exchange_failed)
+                  end
+          end).
+-endif.
 perform_exchange(Ensemble, Peer, Id, Tree, Peers, Views, Trusted) ->
     Required = case Trusted of
                    true  -> quorum;
