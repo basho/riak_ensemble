@@ -2,7 +2,7 @@
              [{description,"Multi-Paxos framework in Erlang"},
               {vsn,"2.4.0"},
               {registered,[]},
-              {applications,[kernel,stdlib,lager]},
+              {applications,[kernel,stdlib,lager,gen_fsm_compat]},
               {mod,{riak_ensemble_app,[]}},
               {env,[]},
               {maintainers,["basho","Tristan Sloughter"]},

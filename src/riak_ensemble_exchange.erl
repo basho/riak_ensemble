@@ -18,7 +18,8 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_ensemble_exchange).
--compile(export_all).
+-export([start_exchange/7, perform_exchange/7, perform_exchange2/5, exchange/5,
+          exchange_get/4, trust_majority/4, all_trust_majority/3]).
 
 start_exchange(Ensemble, Peer, Id, Tree, Peers, Views, Trusted) ->
     spawn(fun() ->
@@ -26,7 +27,7 @@ start_exchange(Ensemble, Peer, Id, Tree, Peers, Views, Trusted) ->
                       perform_exchange(Ensemble, Peer, Id, Tree, Peers, Views, Trusted)
                   catch Class:Reason ->
                           io:format("CAUGHT: ~p/~p~n~p~n", [Class, Reason, erlang:get_stacktrace()]),
-                          gen_fsm:send_event(Peer, exchange_failed)
+                          gen_fsm_compat:send_event(Peer, exchange_failed)
                   end
           end).
 
@@ -49,7 +50,7 @@ perform_exchange(Ensemble, Peer, Id, Tree, Peers, Views, Trusted) ->
         end,
     case RemotePeers of
         failed ->
-            gen_fsm:send_event(Peer, exchange_failed),
+            gen_fsm_compat:send_event(Peer, exchange_failed),
             ok;
         _ ->
             perform_exchange2(Ensemble, Peer, Id, Tree, RemotePeers)
@@ -61,14 +62,14 @@ perform_exchange2(Ensemble, Peer, Id, Tree, RemotePeers) ->
             exchange(Ensemble, Peer, Id, Tree, RemotePeers);
         false ->
             %% io:format(user, "~p: tree_corrupted (perform_exchange2)~n", [Id]),
-            gen_fsm:sync_send_event(Peer, tree_corrupted, infinity)
+            gen_fsm_compat:sync_send_event(Peer, tree_corrupted, infinity)
     end.
 
 exchange(_Ensemble, Peer, _Id, _Tree, []) ->
-    gen_fsm:send_event(Peer, exchange_complete);
+    gen_fsm_compat:send_event(Peer, exchange_complete);
 exchange(Ensemble, Peer, Id, Tree, [RemotePeer|RemotePeers]) ->
     RemotePid = riak_ensemble_manager:get_peer_pid(Ensemble, RemotePeer),
-    RemoteTree = gen_fsm:sync_send_event(RemotePid, tree_pid, infinity),
+    RemoteTree = gen_fsm_compat:sync_send_event(RemotePid, tree_pid, infinity),
     Local = fun(exchange_get, {L,B}) ->
                     exchange_get(L, B, Peer, Tree);
                (start_exchange_level, _) ->
@@ -100,7 +101,7 @@ exchange(Ensemble, Peer, Id, Tree, [RemotePeer|RemotePeers]) ->
 exchange_get(L, B, PeerPid, Tree) ->
     case riak_ensemble_peer_tree:exchange_get(L, B, Tree) of
         corrupted ->
-            gen_fsm:sync_send_event(PeerPid, tree_corrupted, infinity),
+            gen_fsm_compat:sync_send_event(PeerPid, tree_corrupted, infinity),
             throw(corrupted);
         Hashes ->
             Hashes

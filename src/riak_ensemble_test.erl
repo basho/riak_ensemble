@@ -18,8 +18,7 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_ensemble_test).
--compile(export_all).
-
+-export([setup/0, maybe_drop/2]).
 -define(ETS_TEST, riak_ensemble_test).
 
 -ifdef(TEST).
