@@ -161,7 +161,7 @@ bang_unreliable(Dest, Msg) ->
     catch erlang:send(Dest, Msg, [noconnect, nosuspend]),
     Msg.
 
--ifdef(rand_module).
+-ifdef(rand).
 random_seed(Id) ->
     {A,B,C} = os:timestamp(),
     _ = rand:seed(exsplus, {A + erlang:phash2(Id), B + erlang:phash2(node()), C}).
@@ -171,7 +171,7 @@ random_seed(Id) ->
     _ = random:seed(A + erlang:phash2(Id), B + erlang:phash2(node()), C).
 -endif.
 
--ifdef(rand_module).
+-ifdef(rand).
 random_uniform(Range) ->
     rand:uniform(Range).
 -else.
