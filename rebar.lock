@@ -1,10 +1,10 @@
 {"1.1.0",
-[{<<"gen_fsm_compat">>,{pkg,<<"gen_fsm_compat">>,<<"0.2.0">>},0},
- {<<"goldrush">>,{pkg,<<"goldrush">>,<<"0.1.8">>},1},
- {<<"lager">>,{pkg,<<"lager">>,<<"3.2.1">>},0}]}.
+[{<<"gen_fsm_compat">>,{pkg,<<"gen_fsm_compat">>,<<"0.3.0">>},0},
+ {<<"goldrush">>,{pkg,<<"goldrush">>,<<"0.1.9">>},1},
+ {<<"lager">>,{pkg,<<"lager">>,<<"3.2.4">>},0}]}.
 [
 {pkg_hash,[
- {<<"gen_fsm_compat">>, <<"019C53E007602A6F3AF7FE8BFE697BAA8A2C9C3239770C124363D9A2111C1F12">>},
- {<<"goldrush">>, <<"2024BA375CEEA47E27EA70E14D2C483B2D8610101B4E852EF7F89163CDB6E649">>},
- {<<"lager">>, <<"EEF4E18B39E4195D37606D9088EA05BF1B745986CF8EC84F01D332456FE88D17">>}]}
+ {<<"gen_fsm_compat">>, <<"5903549F67D595F58A7101154CBE0FDD46955FBFBE40813F1E53C23A970FF5F4">>},
+ {<<"goldrush">>, <<"F06E5D5F1277DA5C413E84D5A2924174182FB108DABB39D5EC548B27424CD106">>},
+ {<<"lager">>, <<"A6DEB74DAE7927F46BD13255268308EF03EB206EC784A94EAF7C1C0F3B811615">>}]}
 ].
