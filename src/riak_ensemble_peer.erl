@@ -21,7 +21,7 @@
 %% TODO: Before PR. Module + other edocs, general cleanup/refactor.
 
 -module(riak_ensemble_peer).
--behaviour(gen_fsm).
+-behaviour(gen_fsm_compat).
 
 -include_lib("riak_ensemble_types.hrl").
 
@@ -54,9 +54,10 @@
 -export([do_kupdate/4, do_kput_once/4, do_kmodify/4]).
 
 -compile({pulse_replace_module,
-          [{gen_fsm, pulse_gen_fsm}]}).
+          [{gen_fsm, pulse_gen_fsm},
+           {gen_fsm_compat, pulse_gen_fsm}]}).
 
-%% gen_fsm callbacks
+%% gen_fsm_compat callbacks
 -export([init/1, handle_event/3, handle_sync_event/4, handle_info/3,
          terminate/3, code_change/4]).
 
@@ -154,12 +155,12 @@
 -spec start_link(module(), ensemble_id(), peer_id(), [any()])
                 -> ignore | {error, _} | {ok, pid()}.
 start_link(Mod, Ensemble, Id, Args) ->
-    gen_fsm:start_link(?MODULE, [Mod, Ensemble, Id, Args], []).
+    gen_fsm_compat:start_link(?MODULE, [Mod, Ensemble, Id, Args], []).
 
 -spec start(module(), ensemble_id(), peer_id(), [any()])
            -> ignore | {error, _} | {ok, pid()}.
 start(Mod, Ensemble, Id, Args) ->
-    gen_fsm:start(?MODULE, [Mod, Ensemble, Id, Args], []).
+    gen_fsm_compat:start(?MODULE, [Mod, Ensemble, Id, Args], []).
 
 %% TODO: Do we want this to be routable by ensemble/id instead?
 -spec join(pid(), peer_id()) -> ok | timeout | {error, [{already_member, peer_id()}]}.
@@ -207,33 +208,33 @@ stable_views(Ensemble, Timeout) ->
 
 -spec get_leader(pid()) -> peer_id().
 get_leader(Pid) when is_pid(Pid) ->
-    gen_fsm:sync_send_all_state_event(Pid, get_leader, infinity).
+    gen_fsm_compat:sync_send_all_state_event(Pid, get_leader, infinity).
 
 -spec watch_leader_status(pid()) -> ok.
 watch_leader_status(Pid) when is_pid(Pid) ->
-    gen_fsm:send_all_state_event(Pid, {watch_leader_status, self()}).
+    gen_fsm_compat:send_all_state_event(Pid, {watch_leader_status, self()}).
 
 -spec stop_watching(pid()) -> ok.
 stop_watching(Pid) when is_pid(Pid) ->
-    gen_fsm:send_all_state_event(Pid, {stop_watching, self()}).
+    gen_fsm_compat:send_all_state_event(Pid, {stop_watching, self()}).
 
 -ifdef(TEST).
 -spec get_watchers(pid()) -> [{pid(), reference()}].
 get_watchers(Pid) when is_pid(Pid) ->
-    gen_fsm:sync_send_all_state_event(Pid, get_watchers).
+    gen_fsm_compat:sync_send_all_state_event(Pid, get_watchers).
 -endif.
 
 get_info(Pid) when is_pid(Pid) ->
-    gen_fsm:sync_send_all_state_event(Pid, get_info, infinity).
+    gen_fsm_compat:sync_send_all_state_event(Pid, get_info, infinity).
 
 tree_info(Pid) when is_pid(Pid) ->
-    gen_fsm:sync_send_all_state_event(Pid, tree_info, infinity).
+    gen_fsm_compat:sync_send_all_state_event(Pid, tree_info, infinity).
 
 backend_pong(Pid) when is_pid(Pid) ->
-    gen_fsm:send_event(Pid, backend_pong).
+    gen_fsm_compat:send_event(Pid, backend_pong).
 
 force_state(Pid, EpochSeq) ->
-    gen_fsm:sync_send_event(Pid, {force_state, EpochSeq}).
+    gen_fsm_compat:sync_send_event(Pid, {force_state, EpochSeq}).
 
 %%%===================================================================
 %%% K/V API
@@ -350,7 +351,7 @@ local_put(Pid, Key, Obj, Timeout) when is_pid(Pid) ->
 %% this function provide no consistency guarantees whatsoever.
 -spec debug_local_get(pid(), term()) -> std_reply().
 debug_local_get(Pid, Key) ->
-    gen_fsm:sync_send_all_state_event(Pid, {debug_local_get, Key}).
+    gen_fsm_compat:sync_send_all_state_event(Pid, {debug_local_get, Key}).
 -endif.
 
 %%%===================================================================
@@ -474,7 +475,7 @@ exchange(Msg, State) ->
     common(Msg, State, exchange).
 
 exchange(tree_corrupted, From, State) ->
-    gen_fsm:reply(From, ok),
+    gen_fsm_compat:reply(From, ok),
     repair(init, State);
 exchange(Msg, From, State) ->
     common(Msg, From, State, exchange).
@@ -698,7 +699,7 @@ leading(ping_quorum, From, State=#state{fact=Fact, id=Id, members=Members,
                                         %% io:format("timeout~n"),
                                         Extra
                                 end,
-                       gen_fsm:reply(From, {Id, TreeReady, Result})
+                       gen_fsm_compat:reply(From, {Id, TreeReady, Result})
                end),
     {next_state, leading, State3};
 leading(stable_views, _From, State=#state{fact=Fact}) ->
@@ -863,7 +864,7 @@ following(Msg, From, State) ->
 
 -spec forward(_, fsm_from(), state()) -> {next_state, following, state()}.
 forward(Msg, From, State) ->
-    catch gen_fsm:send_event(peer(leader(State), State), {forward, From, Msg}),
+    catch gen_fsm_compat:send_event(peer(leader(State), State), {forward, From, Msg}),
     {next_state, following, State}.
 
 -spec valid_request(_,_,state()) -> boolean().
@@ -1027,13 +1028,13 @@ common(Msg, State, StateName) ->
 -spec common(_, fsm_from(), state(), StateName) -> {next_state, StateName, state()}.
 common({force_state, {Epoch, Seq}}, From, State, StateName) ->
     State2 = set_epoch(Epoch, set_seq(Seq, State)),
-    gen_fsm:reply(From, ok),
+    gen_fsm_compat:reply(From, ok),
     {next_state, StateName, State2};
 common(tree_pid, From, State, StateName) ->
-    gen_fsm:reply(From, State#state.tree),
+    gen_fsm_compat:reply(From, State#state.tree),
     {next_state, StateName, State};
 common(tree_corrupted, From, State, StateName) ->
-    gen_fsm:reply(From, ok),
+    gen_fsm_compat:reply(From, ok),
     lager:debug("~p: tree_corrupted in state ~p", [State#state.id, StateName]),
     repair(init, State);
 common(_Msg, From, State, StateName) ->
@@ -1363,7 +1364,7 @@ send_reply(From, Reply) ->
         nack -> ok;
         {ok,_} -> ok
     end,
-    gen_fsm:reply(From, Reply),
+    gen_fsm_compat:reply(From, Reply),
     ok.
 
 do_put_fsm(Key, Fun, Args, From, Self, State=#state{tree=Tree}) ->
@@ -1371,7 +1372,7 @@ do_put_fsm(Key, Fun, Args, From, Self, State=#state{tree=Tree}) ->
         corrupted ->
             %% io:format("Tree corrupted (put)!~n"),
             send_reply(From, failed),
-            gen_fsm:sync_send_event(Self, tree_corrupted, infinity);
+            gen_fsm_compat:sync_send_event(Self, tree_corrupted, infinity);
         KnownHash ->
             do_put_fsm(Key, Fun, Args, From, Self, KnownHash, State)
     end.
@@ -1383,7 +1384,7 @@ do_put_fsm(Key, Fun, Args, From, Self, KnownHash, State) ->
     case is_current(Local, Key, KnownHash, State2) of
         local_timeout ->
             %% TODO: Should this send a request_failed?
-            %% gen_fsm:sync_send_event(Self, request_failed, infinity),
+            %% gen_fsm_compat:sync_send_event(Self, request_failed, infinity),
             send_reply(From, unavailable);
         true ->
             do_modify_fsm(Key, Local, Fun, Args, From, State2);
@@ -1393,9 +1394,9 @@ do_put_fsm(Key, Fun, Args, From, Self, KnownHash, State) ->
                     do_modify_fsm(Key, Current, Fun, Args, From, State2);
                 {corrupted, _State2} ->
                     send_reply(From, failed),
-                    gen_fsm:sync_send_event(Self, tree_corrupted, infinity);
+                    gen_fsm_compat:sync_send_event(Self, tree_corrupted, infinity);
                 {failed, _State3} ->
-                    gen_fsm:sync_send_event(Self, request_failed, infinity),
+                    gen_fsm_compat:sync_send_event(Self, request_failed, infinity),
                     send_reply(From, unavailable)
             end
     end.
@@ -1407,11 +1408,11 @@ do_modify_fsm(Key, Current, Fun, Args, From, State=#state{self=Self}) ->
             send_reply(From, {ok, New});
         {corrupted, _State2} ->
             send_reply(From, failed),
-            gen_fsm:sync_send_event(Self, tree_corrupted, infinity);
+            gen_fsm_compat:sync_send_event(Self, tree_corrupted, infinity);
         {precondition, _State2} ->
             send_reply(From, failed);
         {failed, _State2} ->
-            gen_fsm:sync_send_event(Self, request_failed, infinity),
+            gen_fsm_compat:sync_send_event(Self, request_failed, infinity),
             send_reply(From, timeout)
     end.
 
@@ -1425,9 +1426,9 @@ do_overwrite_fsm(Key, Val, From, Self, State0=#state{ets=ETS}) ->
             send_reply(From, {ok, Result});
         {corrupted, _State2} ->
             send_reply(From, timeout),
-            gen_fsm:sync_send_event(Self, tree_corrupted, infinity);
+            gen_fsm_compat:sync_send_event(Self, tree_corrupted, infinity);
         {failed, _State2} ->
-            gen_fsm:sync_send_event(Self, request_failed, infinity),
+            gen_fsm_compat:sync_send_event(Self, request_failed, infinity),
             send_reply(From, timeout)
     end.
 
@@ -1437,7 +1438,7 @@ do_get_fsm(Key, From, Self, Opts, State=#state{tree=Tree}) ->
         corrupted ->
             %% io:format("Tree corrupted (get)!~n"),
             send_reply(From, failed),
-            gen_fsm:sync_send_event(Self, tree_corrupted, infinity);
+            gen_fsm_compat:sync_send_event(Self, tree_corrupted, infinity);
         KnownHash ->
             do_get_fsm(Key, From, Self, KnownHash, Opts, State)
     end.
@@ -1452,7 +1453,7 @@ do_get_fsm(Key, From, Self, KnownHash, Opts, State0) ->
     case is_current(Local, Key, KnownHash, State) of
         local_timeout ->
             %% TODO: Should this send a request_failed?
-            %% gen_fsm:sync_send_event(Self, request_failed, infinity),
+            %% gen_fsm_compat:sync_send_event(Self, request_failed, infinity),
             send_reply(From, timeout);
         true ->
             case LocalOnly of
@@ -1464,7 +1465,7 @@ do_get_fsm(Key, From, Self, KnownHash, Opts, State0) ->
                             %% TODO: If there's a new leader, we could forward
                             %%       instead of timeout.
                             send_reply(From, timeout),
-                            gen_fsm:sync_send_event(Self, request_failed, infinity)
+                            gen_fsm_compat:sync_send_event(Self, request_failed, infinity)
                     end;
                 false ->
                     case get_latest_obj(Key, Local, KnownHash, State) of
@@ -1482,11 +1483,11 @@ do_get_fsm(Key, From, Self, KnownHash, Opts, State0) ->
                     send_reply(From, {ok, Current});
                 {corrupted, _State2} ->
                     send_reply(From, failed),
-                    gen_fsm:sync_send_event(Self, tree_corrupted, infinity);
+                    gen_fsm_compat:sync_send_event(Self, tree_corrupted, infinity);
                 {failed, _State2} ->
                     %% TODO: Should this be failed or unavailable?
                     send_reply(From, failed),
-                    gen_fsm:sync_send_event(Self, request_failed, infinity)
+                    gen_fsm_compat:sync_send_event(Self, request_failed, infinity)
             end
     end.
 
@@ -1675,7 +1676,7 @@ put_obj(Key, Obj, Seq, State=#state{id=Id, members=Members, self=Self}) ->
     case local_put(Self, Key, Obj2, ?LOCAL_PUT_TIMEOUT) of
         failed ->
             lager:warning("Failed local_put for Key ~p, Id = ~p", [Key, Id]),
-            gen_fsm:sync_send_event(Self, request_failed, infinity),
+            gen_fsm_compat:sync_send_event(Self, request_failed, infinity),
             {failed, State2};
         Local ->
             case wait_for_quorum(Future) of
@@ -1811,16 +1812,13 @@ get_value(Obj, Default, State) ->
     end.
 
 %%%===================================================================
-%%% gen_fsm callbacks
+%%% gen_fsm_compat callbacks
 %%%===================================================================
 
 -spec init([any(),...]) -> {ok, setup, state()}.
 init([Mod, Ensemble, Id, Args]) ->
     lager:debug("~p: starting peer", [Id]),
-    {A,B,C} = os:timestamp(),
-    _ = random:seed(A + erlang:phash2(Id),
-                    B + erlang:phash2(node()),
-                    C),
+    _ = riak_ensemble_util:random_seed(Id),
     ETS = ets:new(x, [public, {read_concurrency, true}, {write_concurrency, true}]),
     TreeTrust = case riak_ensemble_config:tree_validation() of
                     false ->
@@ -1835,7 +1833,7 @@ init([Mod, Ensemble, Id, Args]) ->
                    tree_trust=TreeTrust,
                    alive=?ALIVE,
                    mod=Mod},
-    gen_fsm:send_event(self(), {init, Args}),
+    gen_fsm_compat:send_event(self(), {init, Args}),
     riak_ensemble_peer_sup:register_peer(Ensemble, Id, self(), ETS),
     {ok, setup, State}.
 
@@ -2230,13 +2228,13 @@ save_fact(#state{ensemble=Ensemble, id=Id, fact=Fact}) ->
 -spec set_timer(non_neg_integer(), any(), state()) -> state().
 set_timer(Time, Event, State) ->
     State2 = cancel_timer(State),
-    Timer = gen_fsm:send_event_after(Time, Event),
+    Timer = gen_fsm_compat:send_event_after(Time, Event),
     State2#state{timer=Timer}.
 
 -spec cancel_timer(state()) -> state().
 cancel_timer(State=#state{timer=undefined}) ->
     State;
 cancel_timer(State=#state{timer=Timer}) ->
-    %% Note: gen_fsm cancel_timer discards timer message if already sent
-    catch gen_fsm:cancel_timer(Timer),
+    %% Note: gen_fsm_compat cancel_timer discards timer message if already sent
+    catch gen_fsm_compat:cancel_timer(Timer),
     State#state{timer=undefined}.

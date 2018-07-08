@@ -133,8 +133,9 @@ async_repair(Pid) ->
 %%%===================================================================
 
 init([Id, TreeId, Path]) ->
-    Tree = synctree:newdb(Id, [{path, Path},
-                               {tree_id, TreeId}]),
+    TreeType = application:get_env(riak_ensemble, synctree_backend, synctree_ets),
+    Tree = synctree:new(Id, default, default, TreeType, [{path, Path},
+                                                         {tree_id, TreeId}]),
     State = #state{tree=Tree},
     {ok, State}.
 
@@ -209,7 +210,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% Hardcoded to send FSM event as expected by riak_ensemble_peer
 async_reply(From, Reply) when is_pid(From) ->
-    gen_fsm:send_event(From, Reply).
+    gen_fsm_compat:send_event(From, Reply).
 
 -spec do_get(_,state()) -> {any(), state()}.
 do_get(Key, State=#state{tree=Tree}) ->

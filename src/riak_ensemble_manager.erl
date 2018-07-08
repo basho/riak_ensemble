@@ -487,7 +487,7 @@ reload_state() ->
 -spec initial_state() -> state().
 initial_state() ->
     ets:insert(?ETS, {enabled, false}),
-    ClusterName = {node(), erlang:now()},
+    ClusterName = {node(), erlang:unique_integer([positive])},
     CS = riak_ensemble_state:new(ClusterName),
     State=#state{version=0,
                  ensemble_data=[],

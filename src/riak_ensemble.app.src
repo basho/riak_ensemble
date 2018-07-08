@@ -1,12 +1,11 @@
-{application, riak_ensemble,
- [
-  {description, ""},
-  {vsn, git},
-  {registered, []},
-  {applications, [
-                  kernel,
-                  stdlib
-                 ]},
-  {mod, { riak_ensemble_app, []}},
-  {env, []}
- ]}.
+{application,riak_ensemble,
+             [{description,"Multi-Paxos framework in Erlang"},
+              {vsn,"2.4.4"},
+              {registered,[]},
+              {applications,[kernel,stdlib,lager,gen_fsm_compat]},
+              {mod,{riak_ensemble_app,[]}},
+              {env,[]},
+              {maintainers,["basho","Tristan Sloughter"]},
+              {pkg_name,riak_ensemble_ng},
+              {licenses,["Apache 2.0"]},
+              {links,[{"Github","https://github.com/basho/riak_ensemble"}]}]}.
