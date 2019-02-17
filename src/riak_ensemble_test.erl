@@ -17,7 +17,10 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+
 -module(riak_ensemble_test).
+
+-compile(nowarn_export_all).
 -compile(export_all).
 
 -define(ETS_TEST, riak_ensemble_test).

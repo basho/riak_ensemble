@@ -148,7 +148,7 @@ shuffle(L=[_]) ->
     L;
 shuffle(L) ->
     Range = length(L),
-    L2 = [{random:uniform(Range), E} || E <- L],
+    L2 = [{rand:uniform(Range), E} || E <- L],
     [E || {_, E} <- lists:sort(L2)].
 
 %% Copied from riak_core_send_msg.erl

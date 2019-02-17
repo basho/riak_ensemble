@@ -9,3 +9,5 @@ edoc
 deps.test/*
 _build
 .rebar3
+priv/
+c_src/
