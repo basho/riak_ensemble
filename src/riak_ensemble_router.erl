@@ -38,12 +38,15 @@
 %% additional concurrency and not have a single router bottleneck traffic.
 %%
 %% A secondary purpose of this module is to provide an isolated version
-%% of `gen_fsm:send_sync_event' that converts timeouts into error tuples
+%% of `gen_fsm_compat:send_sync_event' that converts timeouts into error tuples
 %% rather than exit conditions, as well as discarding late/delayed messages.
 %% This isolation is provided by spawning an intermediary proxy process.
 
 -module(riak_ensemble_router).
+
+-compile(nowarn_export_all).
 -compile(export_all).
+
 -behaviour(gen_server).
 
 -include_lib("riak_ensemble_types.hrl").
@@ -95,7 +98,7 @@ sync_proxy(From, Ref, Node, Target, Event, Timeout) ->
 -spec sync_proxy_direct(pid(), reference(), pid(), msg(), timeout()) -> ok.
 sync_proxy_direct(From, Ref, Pid, Event, Timeout) ->
     try
-        Result = gen_fsm:sync_send_event(Pid, Event, Timeout),
+        Result = gen_fsm_compat:sync_send_event(Pid, Event, Timeout),
         From ! {Ref, Result},
         ok
     catch
@@ -235,7 +238,7 @@ ensemble_cast(Ensemble, Msg) ->
 handle_ensemble_cast({sync_send_event, From, Ref, Event, Timeout}, Pid) ->
     spawn(fun() ->
                   try
-                      Result = gen_fsm:sync_send_event(Pid, Event, Timeout),
+                      Result = gen_fsm_compat:sync_send_event(Pid, Event, Timeout),
                       From ! {Ref, Result}
                   catch
                       _:_ ->

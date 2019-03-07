@@ -3,6 +3,7 @@
   {git,"git://github.com/basho/eleveldb.git",
        {ref,"db361b1a8387262e715b27fbdd9353f00a07302c"}},
   0},
+ {<<"gen_fsm_compat">>,{pkg,<<"gen_fsm_compat">>,<<"0.3.0">>},0},
  {<<"goldrush">>,{pkg,<<"goldrush">>,<<"0.1.9">>},1},
  {<<"lager">>,
   {git,"git://github.com/erlang-lager/lager.git",
@@ -10,5 +11,6 @@
   0}]}.
 [
 {pkg_hash,[
+ {<<"gen_fsm_compat">>, <<"5903549F67D595F58A7101154CBE0FDD46955FBFBE40813F1E53C23A970FF5F4">>},
  {<<"goldrush">>, <<"F06E5D5F1277DA5C413E84D5A2924174182FB108DABB39D5EC548B27424CD106">>}]}
 ].

@@ -18,7 +18,10 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_ensemble_config).
+
+-compile(nowarn_export_all).
 -compile(export_all).
+
 -include_lib("riak_ensemble_types.hrl").
 
 %% @doc
@@ -51,7 +54,7 @@ follower_timeout() ->
 %% The election timeout used for randomized election.
 election_timeout() ->
     Timeout = follower_timeout(),
-    Timeout + random:uniform(Timeout).
+    Timeout + rand:uniform(Timeout).
 
 %% @doc
 %% The prefollow timeout determines how long a peer waits to hear from the
