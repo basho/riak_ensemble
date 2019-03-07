@@ -1,7 +1,7 @@
 {"1.1.0",
 [{<<"eleveldb">>,
   {git,"git://github.com/basho/eleveldb.git",
-       {ref,"db361b1a8387262e715b27fbdd9353f00a07302c"}},
+       {ref,"88fc53243819e58f9f2bfdeddb7c231100c31acc"}},
   0},
  {<<"gen_fsm_compat">>,{pkg,<<"gen_fsm_compat">>,<<"0.3.0">>},0},
  {<<"goldrush">>,{pkg,<<"goldrush">>,<<"0.1.9">>},1},
