@@ -209,7 +209,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% Hardcoded to send FSM event as expected by riak_ensemble_peer
 async_reply(From, Reply) when is_pid(From) ->
-    gen_fsm:send_event(From, Reply).
+    gen_fsm_compat:send_event(From, Reply).
 
 -spec do_get(_,state()) -> {any(), state()}.
 do_get(Key, State=#state{tree=Tree}) ->
