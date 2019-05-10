@@ -24,3 +24,6 @@ if [ $failed -gt 0 ]; then
     done
     exit 1
 fi
+
+## remove deps.test so top level riak generate doesn't fail
+rm -rf deps.test
