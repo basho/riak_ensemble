@@ -18,7 +18,7 @@
 %%
 %% -------------------------------------------------------------------
 -module(rt_intercept).
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 -define(DEFAULT_INTERCEPT(Target),
         list_to_atom(atom_to_list(Target) ++ "_intercepts")).
 

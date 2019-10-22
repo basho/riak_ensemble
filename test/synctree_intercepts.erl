@@ -1,5 +1,5 @@
 -module(synctree_intercepts).
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 -define(M, synctree_orig).
 
 %% copied from synctree.erl

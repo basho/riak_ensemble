@@ -1,5 +1,5 @@
 -module(riak_ensemble_basic_backend_intercepts).
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 -include("riak_ensemble_types.hrl").
 
 -define(M, riak_ensemble_basic_backend_orig).

@@ -1,6 +1,6 @@
 %% Various pure tests
 -module(ensemble_tests_pure).
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 -include_lib("eunit/include/eunit.hrl").
 
 -define(TEST(X), {timeout, 60, {test, ?MODULE, X}}).
