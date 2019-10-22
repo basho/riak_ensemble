@@ -71,8 +71,9 @@
 
 -record(state, {savefile :: file:filename(),
                 waiting  :: [gen_server_from()],
-                previous :: binary(),
-                timer    :: reference()}).
+                previous :: binary() | undefined,
+                timer    :: reference() | undefined
+            }).
 
 -type state() :: #state{}.
 

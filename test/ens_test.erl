@@ -1,6 +1,8 @@
 -module(ens_test).
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 -include_lib("eunit/include/eunit.hrl").
+
+-define(TEST_DIR, "_build/test/test-tmp").
 
 run(Test) ->
     %% run(Test, 5*60).
@@ -11,8 +13,8 @@ run(Test, Timeout) ->
      fun() ->
              application:load(crypto),
              application:load(riak_ensemble),
-             os:cmd("rm -rf test-tmp"),
-             application:set_env(riak_ensemble, data_root, "test-tmp"),
+             os:cmd("rm -rf " ++ ?TEST_DIR),
+             application:set_env(riak_ensemble, data_root, ?TEST_DIR),
              {ok, _} = application:ensure_all_started(riak_ensemble),
              ok
      end,

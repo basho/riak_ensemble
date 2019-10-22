@@ -82,22 +82,22 @@
 %%%===================================================================
 
 -record(fact, {epoch    :: epoch(),
-               seq      :: seq(),
-               leader   :: peer_id(),
+               seq      :: seq() | undefined,
+               leader   :: peer_id() | undefined,
 
                %% The epoch/seq which committed current view
-               view_vsn :: {epoch(), seq()},
+               view_vsn :: {epoch(), seq()} | undefined,
 
                %% The epoch/seq which committed current pending view
-               pend_vsn :: {epoch(), seq()},
+               pend_vsn :: {epoch(), seq()} | undefined,
 
                %% The epoch/seq of last commited view change. In other words,
                %% the pend_vsn for the last pending view that has since been
                %% transitioned to (ie. no longer pending)
-               commit_vsn :: {epoch(), seq()},
+               commit_vsn :: {epoch(), seq()} | undefined,
 
-               pending  :: {vsn(), views()},
-               views    :: [[peer_id()]]
+               pending  :: {vsn(), views()} | undefined,
+               views    :: [[peer_id()]] | undefined
               }).
 
 -type fact() :: #fact{}.
@@ -123,26 +123,26 @@
 -record(state, {id            :: peer_id(),
                 ensemble      :: ensemble_id(),
                 ets           :: ets:tid(),
-                fact          :: fact(),
-                awaiting      :: riak_ensemble_msg:msg_state(),
-                preliminary   :: {peer_id(), epoch()},
-                abandoned     :: {epoch(), seq()},
+                fact          :: fact() | undefined,
+                awaiting      :: riak_ensemble_msg:msg_state() | undefined,
+                preliminary   :: {peer_id(), epoch()} | undefined,
+                abandoned     :: {epoch(), seq()} | undefined,
                 timer         :: timer(),
                 ready = false :: boolean(),
-                members       :: [peer_id()],
+                members       :: [peer_id()] | undefined,
                 peers         :: [{peer_id(), pid()}],
                 mod           :: module(),
                 modstate      :: any(),
-                workers       :: tuple(),
+                workers       :: tuple() | undefined,
                 tree_trust    :: boolean(),
-                tree_ready    :: boolean(),
+                tree_ready    :: boolean() | undefined,
                 alive         :: integer(),
-                last_views    :: [[peer_id()]],
-                async         :: pid(),
-                tree          :: pid(),
-                lease         :: riak_ensemble_lease:lease_ref(),
+                last_views    :: [[peer_id()]] | undefined,
+                async         :: pid() | undefined,
+                tree          :: pid() | undefined,
+                lease         :: riak_ensemble_lease:lease_ref() | undefined,
                 watchers = [] :: [{pid(), reference()}],
-                self          :: pid()
+                self          :: pid() | undefined
                }).
 
 -type state() :: #state{}.

@@ -42,12 +42,12 @@
 
 -type required()   :: quorum | other | all | all_or_quorum.
 
--record(msgstate, {awaiting = undefined :: 'undefined' | reqid(),
-                   timer    = undefined :: 'undefined' | reference(),
+-record(msgstate, {awaiting = undefined :: undefined | reqid(),
+                   timer    = undefined :: undefined | reference(),
                    required = quorum    :: required(),
-                   id       :: peer_id(),
-                   views    = [] :: views(),
-                   replies  = [] :: [{peer_id(), any()}]}).
+                   id                   :: undefined | peer_id(),
+                   views    = []        :: views(),
+                   replies  = []        :: [{peer_id(), any()}]}).
 
 -opaque msg_state() :: #msgstate{}.
 -export_type([msg_state/0]).

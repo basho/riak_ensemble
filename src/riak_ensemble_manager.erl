@@ -60,10 +60,10 @@
 -type ensembles()     :: orddict(ensemble_id(), ensemble_data()).
 -type cluster_state() :: riak_ensemble_state:state().
 
--record(state, {version       :: integer(),
+-record(state, {version       :: integer() | undefined,
                 ensemble_data :: ensembles(),
                 remote_peers  :: orddict(peer_id(), pid()),
-                cluster_state :: cluster_state()
+                cluster_state :: cluster_state() | undefined
                }).
 
 -type state() :: #state{}.

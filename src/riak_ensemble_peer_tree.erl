@@ -43,7 +43,8 @@
          terminate/2, code_change/3]).
 
 -record(state, {tree :: any(),
-                corrupted :: {integer(), integer()}}).
+                corrupted :: {integer(), integer()} | undefined
+                }).
 -type state() :: #state{}.
 
 %%%===================================================================
