@@ -22,7 +22,7 @@
                         args    = []                          :: [any()],
                         leader                                :: leader_id(),
                         views                                 :: [[peer_id()]],
-                        seq                                   :: {integer(), integer()}
+                        seq                                   :: {integer(), integer()} | undefined
                        }).
 -type ensemble_info() :: #ensemble_info{}.
 

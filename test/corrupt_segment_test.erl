@@ -1,5 +1,5 @@
 -module(corrupt_segment_test).
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 run_test_() ->
     ens_test:run(fun scenario/0).

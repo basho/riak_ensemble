@@ -106,7 +106,7 @@
                height    :: pos_integer(),
                shift     :: pos_integer(),
                shift_max :: pos_integer(),
-               top_hash  :: hash(),
+               top_hash  :: hash() | undefined,
                buffer    :: [action()],
                buffered  :: non_neg_integer(),
                mod       :: module(),

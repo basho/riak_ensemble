@@ -12,3 +12,5 @@ _build
 rebar.lock
 priv/
 c_src/
+.DS_Store
+log/*\.log

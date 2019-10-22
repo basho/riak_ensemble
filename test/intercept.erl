@@ -23,7 +23,7 @@
 %% because some of these private functions are useful in their own
 %% right.
 -export([add/3, add/4, clean/1]).
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -type abstract_code() :: term().
 -type form() :: term().

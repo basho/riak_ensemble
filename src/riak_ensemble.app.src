@@ -1,11 +1,14 @@
 {application, riak_ensemble,
  [
-  {description, ""},
+  {description, "Multi-Paxos framework in Erlang"},
   {vsn, git},
   {registered, []},
   {applications, [
                   kernel,
-                  stdlib
+                  stdlib,
+                  gen_fsm_compat,
+                  lager,
+                  eleveldb
                  ]},
   {mod, { riak_ensemble_app, []}},
   {env, []}
