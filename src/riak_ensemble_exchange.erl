@@ -22,12 +22,14 @@
 -compile(nowarn_export_all).
 -compile(export_all).
 
+-include("stacktrace.hrl").
+
 start_exchange(Ensemble, Peer, Id, Tree, Peers, Views, Trusted) ->
     spawn(fun() ->
                   try
                       perform_exchange(Ensemble, Peer, Id, Tree, Peers, Views, Trusted)
-                  catch Class:Reason ->
-                          io:format("CAUGHT: ~p/~p~n~p~n", [Class, Reason, erlang:get_stacktrace()]),
+                  catch ?_exception_(Class, Reason, StackToken) ->
+                          io:format("CAUGHT: ~p/~p~n~p~n", [Class, Reason, ?_get_stacktrace_(StackToken)]),
                           gen_fsm_compat:send_event(Peer, exchange_failed)
                   end
           end).
