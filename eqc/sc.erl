@@ -1,5 +1,5 @@
 -module(sc).
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -ifdef(EQC).
 
