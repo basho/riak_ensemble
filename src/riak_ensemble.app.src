@@ -6,7 +6,6 @@
   {applications, [
                   kernel,
                   stdlib,
-                  gen_fsm_compat,
                   lager,
                   eleveldb
                  ]},
