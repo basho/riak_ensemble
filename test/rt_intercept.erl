@@ -19,6 +19,9 @@
 %% -------------------------------------------------------------------
 -module(rt_intercept).
 -compile([export_all, nowarn_export_all]).
+
+-include_lib("kernel/include/logger.hrl").
+
 -define(DEFAULT_INTERCEPT(Target),
         list_to_atom(atom_to_list(Target) ++ "_intercepts")).
 
@@ -101,7 +104,7 @@ transform_anon_fun(Mapping) ->
     Mapping.
 
 remote_compile_and_load(Node, F) ->
-    lager:debug("Compiling and loading file ~s on node ~s", [F, Node]),
+    ?LOG_DEBUG("Compiling and loading file ~s on node ~s", [F, Node]),
     {ok, _, Bin} = rpc:call(Node, compile, file, [F, [binary]]),
     ModName = list_to_atom(filename:basename(F, ".erl")),
     {module, _} = rpc:call(Node, code, load_binary, [ModName, F, Bin]),

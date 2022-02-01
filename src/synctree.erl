@@ -85,6 +85,8 @@
 %% TODO: Should we eeally exporting these directly?
 -export([m_batch/2, m_flush/1]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -define(WIDTH, 16).
 -define(SEGMENTS, 1024*1024).
 
@@ -311,7 +313,7 @@ get_path(N, Level, Shift, Segment, UpHashes, Tree, Acc) ->
     Verify = verify_hash(Expected, Hashes),
     case {Verify, N} of
         {false, _} ->
-            lager:warning("Corrupted at ~p/~p~n", [Level, Bucket]),
+            ?LOG_WARNING("Corrupted at ~p/~p~n", [Level, Bucket]),
             {corrupted, Level, Bucket};
         {_, 0} ->
             Acc2;

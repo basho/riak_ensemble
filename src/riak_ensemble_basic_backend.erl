@@ -37,6 +37,8 @@
 -export([synctree_path/2]).
 -export([handle_down/4]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -include_lib("riak_ensemble_types.hrl").
 
 -record(obj, {epoch :: epoch(),
@@ -167,7 +169,7 @@ load_saved_data(File) ->
                         {ok, binary_to_term(Binary)}
                     catch
                         _:_ ->
-                            lager:warning("Corrupted state detected. "
+                            ?LOG_WARNING("Corrupted state detected. "
                                           "Reverting to empty state."),
                             not_found
                     end;

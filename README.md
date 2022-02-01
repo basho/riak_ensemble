@@ -1,3 +1,5 @@
+[![Erlang CI Actions Status](https://github.com/basho/riak_ensemble/workflows/Erlang%20CI/badge.svg)](https://github.com/basho/riak_ensemble/actions)
+
 (Note: Work-in-progress documentation [here](https://github.com/basho/riak_ensemble/blob/develop/doc/Readme.md))
 
 `riak_ensemble` is a consensus library that supports creating multiple

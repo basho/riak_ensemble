@@ -6,7 +6,6 @@
   {applications, [
                   kernel,
                   stdlib,
-                  lager,
                   eleveldb
                  ]},
   {mod, { riak_ensemble_app, []}},

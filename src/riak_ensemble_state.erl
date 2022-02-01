@@ -31,6 +31,8 @@
 -export([merge/2]).
 -export([id/1, members/1, ensembles/1, pending/1]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -type ensembles() :: orddict(ensemble_id(), ensemble_info()).
 -type pending()   :: orddict(ensemble_id(), {vsn(), views()}).
 
@@ -170,7 +172,7 @@ set_pending(Vsn, Ensemble, Views, State=?STATE{pending=Pending}) ->
 
 -spec merge(state(), state()) -> state().
 merge(A, B) when A?STATE.enabled and (A?STATE.id =/= B?STATE.id) ->
-    _ = lager:warning("Ignoring cluster state with different id"),
+    ?LOG_WARNING("Ignoring cluster state with different id"),
     A;
 merge(A=?STATE{members=MembersA, ensembles=EnsemblesA, pending=PendingA},
       _=?STATE{members=MembersB, ensembles=EnsemblesB, pending=PendingB}) ->
