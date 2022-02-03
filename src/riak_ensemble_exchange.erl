@@ -26,14 +26,12 @@
             [{gen_fsm, sync_send_event, 3},
                 {gen_fsm, send_event, 2}]}).
 
--include("stacktrace.hrl").
-
 start_exchange(Ensemble, Peer, Id, Tree, Peers, Views, Trusted) ->
     spawn(fun() ->
                   try
                       perform_exchange(Ensemble, Peer, Id, Tree, Peers, Views, Trusted)
-                  catch ?_exception_(Class, Reason, StackToken) ->
-                          io:format("CAUGHT: ~p/~p~n~p~n", [Class, Reason, ?_get_stacktrace_(StackToken)]),
+                  catch Class:Reason:Stacktrace ->
+                          io:format("CAUGHT: ~p/~p~n~p~n", [Class, Reason, Stacktrace]),
                           gen_fsm:send_event(Peer, exchange_failed)
                   end
           end).
